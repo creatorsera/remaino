@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "Keyboard"
+rootProject.name = "remaino"
 include(":app")

@@ -27,7 +27,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
     override fun onCreate() {
         super.onCreate()
         stats = TypingStats(this)
-        wordFreq = WordFrequencies(this)
+        wordFreq = WordFrequencies.get(this)
     }
 
     override fun onCreateInputView(): View {
@@ -58,6 +58,8 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
             action != EditorInfo.IME_ACTION_NONE &&
             action != EditorInfo.IME_ACTION_UNSPECIFIED
 
+        val options = KeyboardPrefs(this)
+        keyboardView.applySettings(options.showNumberRow, options.keyPreview)
         keyboardView.closeTray()
         keyboardView.setSensitive(sensitive)
         keyboardView.setSymbols(
@@ -174,6 +176,13 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         }
         ic.commitText("$out ", 1)
         countWord(word)
+        refreshSuggestions()
+    }
+
+    override fun onEmoji(emoji: String) {
+        val ic = currentInputConnection ?: return
+        finishWord()
+        ic.commitText(emoji, 1)
         refreshSuggestions()
     }
 

@@ -16,8 +16,10 @@ import android.util.TypedValue
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.ColorUtils
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -27,7 +29,7 @@ enum class ToolbarAction { MENU, CLOSE, MIC, EMOJI, CLIPBOARD, THEME, LANGUAGE, 
 
 /**
  * The whole keyboard drawn on one canvas: a rounded top toolbar (suggestions and icons)
- * above the keys. Faster than one view per key.
+ * above the keys or the emoji panel. Faster than one view per key.
  */
 class KeyboardView(context: Context) : View(context) {
 
@@ -38,14 +40,18 @@ class KeyboardView(context: Context) : View(context) {
         fun onEnter()
         fun onSuggestion(word: String)
         fun onGlobe()
+        fun onEmoji(emoji: String)
         fun onToolbarAction(action: ToolbarAction)
     }
+
+    private enum class Panel { KEYS, EMOJI }
 
     private class Target(
         val rect: RectF,
         val key: Key? = null,
         val action: ToolbarAction? = null,
         val suggestionIndex: Int = -1,
+        val tabIndex: Int = -1,
     )
 
     var listener: Listener? = null
@@ -62,11 +68,31 @@ class KeyboardView(context: Context) : View(context) {
     var showingSymbols: Boolean = false
         private set
 
+    private var panel = Panel.KEYS
     private var trayOpen = false
     private var sensitive = false
+    private var showNumberRow = true
+    private var previewEnabled = true
     private var suggestions: List<String> = emptyList()
     private var navInset = 0
     private var lastShiftTap = 0L
+
+    // Emoji panel state
+    private val recentsStore = EmojiRecents(context)
+    private var emojiRecents: List<String> = emptyList()
+    private var emojiTab = 1
+    private var emojiScroll = 0f
+    private val categoryCache = HashMap<Int, List<String>>()
+    private val gridRect = RectF()
+    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+    private var gridPointer = -1
+    private var gridDownY = 0f
+    private var gridLastY = 0f
+    private var gridMoved = false
+
+    private val abcKey = Key("ABC", KeyType.LETTERS)
+    private val panelSpaceKey = Key("", KeyType.SPACE)
+    private val panelBackspaceKey = Key("", KeyType.BACKSPACE)
 
     private val targets = ArrayList<Target>()
     private val pressedByPointer = HashMap<Int, Target>()
@@ -74,10 +100,22 @@ class KeyboardView(context: Context) : View(context) {
 
     private val uiHandler = Handler(Looper.getMainLooper())
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val glyphPaint = Paint()
     private val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
     private val path = Path()
     private val tmpRect = RectF()
     private val slopRect = RectF()
+
+    private var longPressCandidate: Target? = null
+    private var longPressFired: Target? = null
+    private val longPressRunnable = Runnable {
+        val tg = longPressCandidate
+        if (tg != null && pressedByPointer.values.any { it === tg }) {
+            longPressFired = tg
+            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            handleAction(ToolbarAction.EMOJI)
+        }
+    }
 
     private val repeatRunnable = object : Runnable {
         override fun run() {
@@ -107,17 +145,21 @@ class KeyboardView(context: Context) : View(context) {
     private fun sp(v: Float): Float =
         TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, v, resources.displayMetrics)
 
-    private val toolbarH: Float get() = dp(52f)
-    private val rowH: Float get() = dp(46f)
-    private val rowGap: Float get() = dp(6f)
-    private val sideMargin: Float get() = dp(6f)
-    private val keyGap: Float get() = dp(4f)
-    private val topPad: Float get() = dp(8f)
+    private val toolbarH: Float get() = dp(48f)
+    private val rowH: Float get() = dp(50f)
+    private val rowGap: Float get() = dp(4f)
+    private val sideMargin: Float get() = dp(3f)
+    private val keyGap: Float get() = dp(3f)
+    private val topPad: Float get() = dp(6f)
     private val bottomPad: Float get() = max(dp(14f), navInset.toFloat())
+
+    private fun rowCount(): Int = Layouts.rowCount(showNumberRow)
+    private fun keysTop(): Float = toolbarH + topPad
+    private fun keysHeight(): Float = rowCount() * rowH + (rowCount() - 1) * rowGap
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val w = MeasureSpec.getSize(widthMeasureSpec)
-        val h = (toolbarH + topPad + 4 * rowH + 3 * rowGap + bottomPad).toInt()
+        val h = (keysTop() + keysHeight() + bottomPad).toInt()
         setMeasuredDimension(w, h)
     }
 
@@ -128,6 +170,7 @@ class KeyboardView(context: Context) : View(context) {
 
     override fun onDetachedFromWindow() {
         uiHandler.removeCallbacks(repeatRunnable)
+        uiHandler.removeCallbacks(longPressRunnable)
         super.onDetachedFromWindow()
     }
 
@@ -138,10 +181,24 @@ class KeyboardView(context: Context) : View(context) {
         invalidate()
     }
 
+    /** Shows the symbols page (or the letters page) and leaves the emoji panel. */
     fun setSymbols(on: Boolean) {
-        if (showingSymbols == on) return
+        val changed = showingSymbols != on || panel != Panel.KEYS
         showingSymbols = on
-        rebuildTargets()
+        panel = Panel.KEYS
+        if (changed) {
+            rebuildTargets()
+            invalidate()
+        }
+    }
+
+    fun applySettings(numberRow: Boolean, preview: Boolean) {
+        previewEnabled = preview
+        if (numberRow != showNumberRow) {
+            showNumberRow = numberRow
+            requestLayout()
+            rebuildTargets()
+        }
         invalidate()
     }
 
@@ -213,14 +270,17 @@ class KeyboardView(context: Context) : View(context) {
             }
         }
 
-        // Keys
-        val rows = if (showingSymbols) Layouts.symbols else Layouts.letters
+        if (panel == Panel.EMOJI) buildEmojiTargets(w) else buildKeyTargets(w)
+    }
+
+    private fun buildKeyTargets(w: Float) {
+        val rows = if (showingSymbols) Layouts.symbols(showNumberRow) else Layouts.letters(showNumberRow)
         val avail = w - 2 * sideMargin
         rows.forEachIndexed { r, row ->
             val total = row.sumOf { it.weight.toDouble() }.toFloat()
             val unit = (avail - keyGap * (row.size - 1)) / total
             var x = sideMargin
-            val top = toolbarH + topPad + r * (rowH + rowGap)
+            val top = keysTop() + r * (rowH + rowGap)
             for (key in row) {
                 val kw = key.weight * unit
                 if (key.type != KeyType.SPACER) {
@@ -228,6 +288,43 @@ class KeyboardView(context: Context) : View(context) {
                 }
                 x += kw + keyGap
             }
+        }
+    }
+
+    private fun buildEmojiTargets(w: Float) {
+        val left = sideMargin
+        val right = w - sideMargin
+        val top = keysTop()
+        val tabsH = dp(40f)
+        val tabs = EmojiData.categories.size + 1
+        val tabW = (right - left) / tabs
+        for (i in 0 until tabs) {
+            targets.add(Target(RectF(left + i * tabW, top, left + (i + 1) * tabW, top + tabsH), tabIndex = i))
+        }
+        val bottomH = dp(46f)
+        val bottomTop = top + keysHeight() - bottomH
+        gridRect.set(left, top + tabsH + dp(4f), right, bottomTop - dp(4f))
+        val bw = dp(72f)
+        targets.add(Target(RectF(left, bottomTop, left + bw, bottomTop + bottomH), key = abcKey))
+        targets.add(
+            Target(RectF(left + bw + keyGap, bottomTop, right - bw - keyGap, bottomTop + bottomH), key = panelSpaceKey),
+        )
+        targets.add(Target(RectF(right - bw, bottomTop, right, bottomTop + bottomH), key = panelBackspaceKey))
+    }
+
+    private fun openEmoji() {
+        panel = Panel.EMOJI
+        emojiRecents = recentsStore.load()
+        emojiTab = if (emojiRecents.isEmpty()) 1 else 0
+        emojiScroll = 0f
+        rebuildTargets()
+        invalidate()
+    }
+
+    private fun emojisForTab(tab: Int): List<String> {
+        if (tab == 0) return emojiRecents
+        return categoryCache.getOrPut(tab) {
+            EmojiData.categories[tab - 1].emojis.filter { glyphPaint.hasGlyph(it) }
         }
     }
 
@@ -256,6 +353,9 @@ class KeyboardView(context: Context) : View(context) {
 
     private fun isPressed(tg: Target): Boolean = pressedByPointer.values.any { it === tg }
 
+    private fun labelFor(key: Key): String =
+        if (!showingSymbols && shiftState != ShiftState.OFF) key.label.uppercase() else key.label
+
     // ---------- drawing ----------
 
     override fun onDraw(canvas: Canvas) {
@@ -276,10 +376,13 @@ class KeyboardView(context: Context) : View(context) {
             val action = tg.action
             when {
                 tg.suggestionIndex >= 0 -> drawChip(canvas, tg, t)
+                tg.tabIndex >= 0 -> drawTab(canvas, tg, t)
                 action != null -> drawToolbarButton(canvas, tg, action, t)
                 key != null -> drawKey(canvas, tg, key, t)
             }
         }
+
+        if (panel == Panel.EMOJI) drawEmojiGrid(canvas, t) else drawPreviews(canvas, t)
     }
 
     private fun drawTopRounded(canvas: Canvas, bottom: Float, w: Float, r: Float, color: Int) {
@@ -328,6 +431,52 @@ class KeyboardView(context: Context) : View(context) {
         canvas.drawText(shown, 0, shown.length, r.centerX(), y, textPaint)
     }
 
+    private fun drawTab(canvas: Canvas, tg: Target, t: KeyboardTheme) {
+        val r = tg.rect
+        if (tg.tabIndex == emojiTab || isPressed(tg)) {
+            val inset = dp(2f)
+            tmpRect.set(r.left + inset, r.top + inset, r.right - inset, r.bottom - inset)
+            fill.color = t.key
+            canvas.drawRoundRect(tmpRect, tmpRect.height() / 2f, tmpRect.height() / 2f, fill)
+        }
+        textPaint.textSize = sp(18f)
+        textPaint.color = t.text
+        val icon = if (tg.tabIndex == 0) "\uD83D\uDD58" else EmojiData.categories[tg.tabIndex - 1].icon
+        val y = r.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f
+        canvas.drawText(icon, r.centerX(), y, textPaint)
+    }
+
+    private fun drawEmojiGrid(canvas: Canvas, t: KeyboardTheme) {
+        val list = emojisForTab(emojiTab)
+        if (list.isEmpty()) {
+            drawLabel(canvas, "Recent emoji appear here", gridRect.centerX(), gridRect.centerY(), sp(14f), t.textDim)
+            return
+        }
+        val cols = 8
+        val cell = gridRect.width() / cols
+        val totalRows = (list.size + cols - 1) / cols
+        val maxScroll = max(0f, totalRows * cell - gridRect.height())
+        emojiScroll = emojiScroll.coerceIn(0f, maxScroll)
+
+        canvas.save()
+        canvas.clipRect(gridRect)
+        textPaint.textSize = sp(26f)
+        textPaint.color = t.text
+        val firstRow = (emojiScroll / cell).toInt()
+        val lastRow = min(totalRows - 1, ((emojiScroll + gridRect.height()) / cell).toInt())
+        for (row in firstRow..lastRow) {
+            for (col in 0 until cols) {
+                val idx = row * cols + col
+                if (idx >= list.size) break
+                val cx = gridRect.left + col * cell + cell / 2f
+                val cy = gridRect.top + row * cell - emojiScroll + cell / 2f
+                val y = cy - (textPaint.descent() + textPaint.ascent()) / 2f
+                canvas.drawText(list[idx], cx, y, textPaint)
+            }
+        }
+        canvas.restore()
+    }
+
     private fun drawKey(canvas: Canvas, tg: Target, key: Key, t: KeyboardTheme) {
         val r = tg.rect
         val pressed = isPressed(tg)
@@ -335,11 +484,10 @@ class KeyboardView(context: Context) : View(context) {
         val cy = r.centerY()
 
         if (key.type == KeyType.ENTER) {
-            // Round bubble, inverted colors
-            val radius = min(r.width(), r.height()) / 2f
+            // Inverted round bubble (pill)
             fill.color = if (pressed) ColorUtils.blendARGB(t.inverted, Color.GRAY, 0.25f) else t.inverted
-            canvas.drawCircle(cx, cy, radius, fill)
-            drawIcon(canvas, R.drawable.ic_enter, cx, cy, dp(24f), t.onInverted)
+            canvas.drawRoundRect(r, r.height() / 2f, r.height() / 2f, fill)
+            drawIcon(canvas, R.drawable.ic_enter, cx, cy, dp(26f), t.onInverted)
             return
         }
 
@@ -347,28 +495,49 @@ class KeyboardView(context: Context) : View(context) {
         val base = when {
             capsOn -> t.inverted
             key.type == KeyType.SHIFT && shiftState == ShiftState.ONE_SHOT -> t.key
-            key.type == KeyType.CHAR || key.type == KeyType.SPACE -> t.key
+            key.tinted -> t.specialKey
+            key.type == KeyType.CHAR || key.type == KeyType.SPACE || key.type == KeyType.GLOBE -> t.key
             else -> t.specialKey
         }
         fill.color = if (pressed) ColorUtils.blendARGB(base, Color.WHITE, 0.18f) else base
-        canvas.drawRoundRect(r, dp(t.keyRadiusDp), dp(t.keyRadiusDp), fill)
+        val radius = if (key.type == KeyType.SYMBOLS || key.type == KeyType.LETTERS) {
+            r.height() / 2f
+        } else {
+            dp(t.keyRadiusDp)
+        }
+        canvas.drawRoundRect(r, radius, radius, fill)
 
         val iconColor = if (capsOn) t.onInverted else t.icon
         when (key.type) {
-            KeyType.SHIFT -> drawIcon(canvas, R.drawable.ic_shift, cx, cy, dp(24f), iconColor)
-            KeyType.BACKSPACE -> drawIcon(canvas, R.drawable.ic_backspace, cx, cy, dp(24f), t.icon)
+            KeyType.SHIFT -> drawIcon(canvas, R.drawable.ic_shift, cx, cy, dp(26f), iconColor)
+            KeyType.BACKSPACE -> drawIcon(canvas, R.drawable.ic_backspace, cx, cy, dp(26f), t.icon)
             KeyType.GLOBE -> drawIcon(canvas, R.drawable.ic_globe, cx, cy, dp(24f), t.icon)
-            KeyType.CHAR -> {
-                val label = if (!showingSymbols && shiftState != ShiftState.OFF) {
-                    key.label.uppercase()
-                } else {
-                    key.label
-                }
-                drawLabel(canvas, label, cx, cy, sp(20f), t.text)
+            KeyType.COMMA_EMOJI -> {
+                drawIcon(canvas, R.drawable.ic_smile, cx, cy - dp(10f), dp(16f), t.icon)
+                drawLabel(canvas, ",", cx, cy + dp(8f), sp(20f), t.text)
             }
-            KeyType.SYMBOLS, KeyType.LETTERS -> drawLabel(canvas, key.label, cx, cy, sp(14f), t.text)
-            KeyType.SPACE -> drawLabel(canvas, key.label, cx, cy, sp(14f), t.textDim)
+            KeyType.CHAR -> drawLabel(canvas, labelFor(key), cx, cy, sp(22f), t.text)
+            KeyType.SYMBOLS, KeyType.LETTERS -> drawLabel(canvas, key.label, cx, cy, sp(15f), t.text)
+            KeyType.SPACE -> drawLabel(canvas, key.label, cx, cy, sp(15f), t.textDim)
             else -> Unit
+        }
+    }
+
+    /** Letter preview bubble above the pressed key. */
+    private fun drawPreviews(canvas: Canvas, t: KeyboardTheme) {
+        if (!previewEnabled) return
+        for (tg in pressedByPointer.values) {
+            val key = tg.key ?: continue
+            if (key.type != KeyType.CHAR) continue
+            val r = tg.rect
+            val bw = r.width() + dp(14f)
+            val bh = dp(54f)
+            val left = (r.centerX() - bw / 2f).coerceIn(dp(10f), max(dp(10f), width - dp(10f) - bw))
+            val top = r.top - bh + dp(8f)
+            tmpRect.set(left, top, left + bw, top + bh)
+            fill.color = ColorUtils.blendARGB(t.key, Color.WHITE, 0.22f)
+            canvas.drawRoundRect(tmpRect, dp(14f), dp(14f), fill)
+            drawLabel(canvas, labelFor(key), tmpRect.centerX(), tmpRect.centerY() - dp(3f), sp(30f), t.text)
         }
     }
 
@@ -393,24 +562,63 @@ class KeyboardView(context: Context) : View(context) {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 val i = event.actionIndex
-                val tg = hit(event.getX(i), event.getY(i))
+                val x = event.getX(i)
+                val y = event.getY(i)
+                if (panel == Panel.EMOJI && gridPointer == -1 && gridRect.contains(x, y)) {
+                    gridPointer = event.getPointerId(i)
+                    gridDownY = y
+                    gridLastY = y
+                    gridMoved = false
+                    return true
+                }
+                val tg = hit(x, y)
                 if (tg != null) {
                     pressedByPointer[event.getPointerId(i)] = tg
                     performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                    if (tg.key?.type == KeyType.BACKSPACE) {
+                    val type = tg.key?.type
+                    if (type == KeyType.BACKSPACE) {
                         listener?.onBackspace()
                         uiHandler.postDelayed(repeatRunnable, 380L)
+                    } else if (type == KeyType.COMMA_EMOJI) {
+                        longPressCandidate = tg
+                        longPressFired = null
+                        uiHandler.postDelayed(longPressRunnable, 400L)
                     }
                     invalidate()
                 }
             }
+            MotionEvent.ACTION_MOVE -> {
+                if (gridPointer != -1) {
+                    val idx = event.findPointerIndex(gridPointer)
+                    if (idx >= 0) {
+                        val y = event.getY(idx)
+                        if (!gridMoved && abs(y - gridDownY) > touchSlop) gridMoved = true
+                        if (gridMoved) {
+                            emojiScroll += gridLastY - y
+                            invalidate()
+                        }
+                        gridLastY = y
+                    }
+                }
+            }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
                 val i = event.actionIndex
-                val down = pressedByPointer.remove(event.getPointerId(i))
+                val id = event.getPointerId(i)
+                if (id == gridPointer) {
+                    if (!gridMoved) tapEmoji(event.getX(i), event.getY(i))
+                    gridPointer = -1
+                    invalidate()
+                    return true
+                }
+                val down = pressedByPointer.remove(id)
                 if (down != null) {
-                    if (down.key?.type == KeyType.BACKSPACE) {
+                    val type = down.key?.type
+                    if (type == KeyType.BACKSPACE) {
                         uiHandler.removeCallbacks(repeatRunnable)
+                    } else if (down === longPressFired) {
+                        longPressFired = null
                     } else {
+                        if (type == KeyType.COMMA_EMOJI) uiHandler.removeCallbacks(longPressRunnable)
                         val slop = dp(10f)
                         slopRect.set(down.rect)
                         slopRect.inset(-slop, -slop)
@@ -421,11 +629,29 @@ class KeyboardView(context: Context) : View(context) {
             }
             MotionEvent.ACTION_CANCEL -> {
                 pressedByPointer.clear()
+                gridPointer = -1
                 uiHandler.removeCallbacks(repeatRunnable)
+                uiHandler.removeCallbacks(longPressRunnable)
                 invalidate()
             }
         }
         return true
+    }
+
+    private fun tapEmoji(x: Float, y: Float) {
+        if (!gridRect.contains(x, y)) return
+        val list = emojisForTab(emojiTab)
+        val cols = 8
+        val cell = gridRect.width() / cols
+        val col = ((x - gridRect.left) / cell).toInt().coerceIn(0, cols - 1)
+        val row = ((y - gridRect.top + emojiScroll) / cell).toInt()
+        val idx = row * cols + col
+        if (idx < 0 || idx >= list.size) return
+        val emoji = list[idx]
+        performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        recentsStore.add(emoji)
+        emojiRecents = recentsStore.load()
+        listener?.onEmoji(emoji)
     }
 
     private fun activate(tg: Target) {
@@ -433,6 +659,12 @@ class KeyboardView(context: Context) : View(context) {
         if (tg.suggestionIndex >= 0) {
             val word = suggestions.getOrNull(tg.suggestionIndex)
             if (word != null) l.onSuggestion(word)
+            return
+        }
+        if (tg.tabIndex >= 0) {
+            emojiTab = tg.tabIndex
+            emojiScroll = 0f
+            invalidate()
             return
         }
         val action = tg.action
@@ -443,14 +675,14 @@ class KeyboardView(context: Context) : View(context) {
         val key = tg.key ?: return
         when (key.type) {
             KeyType.CHAR -> {
-                val out = if (!showingSymbols && shiftState != ShiftState.OFF) key.label.uppercase() else key.label
-                l.onText(out)
+                l.onText(labelFor(key))
                 if (shiftState == ShiftState.ONE_SHOT) setShift(ShiftState.OFF)
             }
             KeyType.SHIFT -> toggleShift()
             KeyType.SYMBOLS -> setSymbols(true)
             KeyType.LETTERS -> setSymbols(false)
             KeyType.GLOBE -> l.onGlobe()
+            KeyType.COMMA_EMOJI -> l.onText(",")
             KeyType.SPACE -> l.onSpace()
             KeyType.ENTER -> l.onEnter()
             KeyType.BACKSPACE, KeyType.SPACER -> Unit
@@ -465,6 +697,7 @@ class KeyboardView(context: Context) : View(context) {
                 invalidate()
             }
             ToolbarAction.CLOSE -> closeTray()
+            ToolbarAction.EMOJI -> openEmoji()
             else -> listener?.onToolbarAction(action)
         }
     }

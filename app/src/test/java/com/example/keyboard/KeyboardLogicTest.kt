@@ -2,6 +2,8 @@ package com.example.keyboard
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 class SuggestionEngineTest {
@@ -38,5 +40,80 @@ class StatsMathTest {
     @Test
     fun zeroWordsIsZeroBooks() {
         assertEquals(0.0, StatsMath.books(0L), 0.0001)
+    }
+
+    @Test
+    fun streakCountsConsecutiveDays() {
+        assertEquals(3, StatsMath.streak(listOf(5L, 2L, 9L, 0L, 4L)))
+    }
+
+    @Test
+    fun quietTodayDoesNotBreakStreak() {
+        assertEquals(2, StatsMath.streak(listOf(0L, 7L, 3L, 0L)))
+    }
+
+    @Test
+    fun noWordsMeansNoStreak() {
+        assertEquals(0, StatsMath.streak(listOf(0L, 0L, 0L)))
+    }
+
+    @Test
+    fun averageHandlesZeroDays() {
+        assertEquals(0L, StatsMath.average(100L, 0))
+        assertEquals(50L, StatsMath.average(100L, 2))
+    }
+}
+
+class LayoutsTest {
+    @Test
+    fun rowCountsMatchPages() {
+        for (numberRow in listOf(true, false)) {
+            assertEquals(Layouts.rowCount(numberRow), Layouts.letters(numberRow).size)
+            assertEquals(Layouts.rowCount(numberRow), Layouts.symbols(numberRow).size)
+        }
+    }
+
+    @Test
+    fun everyRowFillsTheWidth() {
+        val pages = listOf(
+            Layouts.letters(true), Layouts.letters(false), Layouts.symbols(true), Layouts.symbols(false),
+        )
+        for (page in pages) {
+            for (row in page) {
+                assertEquals(10.0, row.sumOf { it.weight.toDouble() }, 0.001)
+            }
+        }
+    }
+}
+
+class BackupCryptoTest {
+    private val iterations = 10_000
+
+    @Test
+    fun roundTripWorks() {
+        val password = "correct horse".toCharArray()
+        val encrypted = BackupCrypto.encrypt("{\"hello\":\"world\"}", password, iterations)
+        assertEquals("{\"hello\":\"world\"}", BackupCrypto.decrypt(encrypted, "correct horse".toCharArray()))
+    }
+
+    @Test
+    fun wrongPasswordIsRejected() {
+        val encrypted = BackupCrypto.encrypt("secret", "right-password".toCharArray(), iterations)
+        try {
+            BackupCrypto.decrypt(encrypted, "wrong-password".toCharArray())
+            fail("Expected the wrong password to be rejected")
+        } catch (e: BackupException) {
+            assertTrue(e.message!!.isNotEmpty())
+        }
+    }
+
+    @Test
+    fun otherFilesAreRejected() {
+        try {
+            BackupCrypto.decrypt(ByteArray(100) { 7 }, "whatever1".toCharArray())
+            fail("Expected a non-backup file to be rejected")
+        } catch (e: BackupException) {
+            assertTrue(e.message!!.contains("backup"))
+        }
     }
 }

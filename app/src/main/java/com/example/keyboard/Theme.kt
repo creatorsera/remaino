@@ -26,7 +26,7 @@ data class KeyboardTheme(
             inverted = 0xFFF2F2F5.toInt(),
             onInverted = 0xFF121214.toInt(),
             toolbarRadiusDp = 28f,
-            keyRadiusDp = 12f,
+            keyRadiusDp = 14f,
         )
     }
 }
