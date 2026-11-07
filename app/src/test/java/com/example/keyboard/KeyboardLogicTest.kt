@@ -117,3 +117,50 @@ class BackupCryptoTest {
         }
     }
 }
+
+class ClipboardLogicTest {
+    private val hour = 3_600_000L
+
+    @Test
+    fun newestComesFirstAndDuplicatesMove() {
+        var items = ClipboardLogic.add(emptyList(), "a", 1L)
+        items = ClipboardLogic.add(items, "b", 2L)
+        items = ClipboardLogic.add(items, "a", 3L)
+        assertEquals(listOf("a", "b"), items.map { it.text })
+    }
+
+    @Test
+    fun duplicateKeepsItsPin() {
+        var items = ClipboardLogic.add(emptyList(), "a", 1L)
+        items = ClipboardLogic.togglePin(items, "a")
+        items = ClipboardLogic.add(items, "a", 5L)
+        assertTrue(items.single().pinned)
+    }
+
+    @Test
+    fun pinnedItemsNeverExpire() {
+        val items = listOf(ClipItem("old", true, 0L), ClipItem("older", false, 0L))
+        val kept = ClipboardLogic.prune(items, 48 * hour, 24)
+        assertEquals(listOf("old"), kept.map { it.text })
+    }
+
+    @Test
+    fun zeroHoursMeansNeverExpire() {
+        val items = listOf(ClipItem("x", false, 0L))
+        assertEquals(1, ClipboardLogic.prune(items, 1000 * hour, 0).size)
+    }
+
+    @Test
+    fun listIsTrimmedButPinnedStay() {
+        var items = listOf(ClipItem("keep", true, 0L))
+        for (i in 1..60) items = ClipboardLogic.add(items, "item$i", i.toLong())
+        assertEquals(ClipboardLogic.MAX_UNPINNED + 1, items.size)
+        assertTrue(items.any { it.text == "keep" })
+    }
+
+    @Test
+    fun clearUnpinnedKeepsPinned() {
+        val items = listOf(ClipItem("a", true, 1L), ClipItem("b", false, 2L))
+        assertEquals(listOf("a"), ClipboardLogic.clearUnpinned(items).map { it.text })
+    }
+}

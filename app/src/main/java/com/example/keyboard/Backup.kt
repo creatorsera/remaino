@@ -72,13 +72,14 @@ object BackupCrypto {
 
 /** Collects everything Remaino keeps on the device into one JSON text, and restores it. */
 object BackupManager {
-    fun buildJson(context: Context): String {
+    fun buildJson(context: Context, includeClipboard: Boolean = false): String {
         val root = JSONObject()
         root.put("version", 1)
         root.put("settings", KeyboardPrefs(context).exportData())
         root.put("stats", TypingStats(context).exportData())
         root.put("words", WordFrequencies.get(context).exportData())
         root.put("emojiRecents", EmojiRecents(context).exportData())
+        if (includeClipboard) root.put("clipboard", ClipboardStore.get(context).exportData())
         return root.toString()
     }
 
@@ -93,5 +94,6 @@ object BackupManager {
         root.optJSONObject("stats")?.let { TypingStats(context).importData(it) }
         root.optJSONObject("words")?.let { WordFrequencies.get(context).importData(it) }
         root.optJSONArray("emojiRecents")?.let { EmojiRecents(context).importData(it) }
+        root.optJSONArray("clipboard")?.let { ClipboardStore.get(context).importData(it) }
     }
 }

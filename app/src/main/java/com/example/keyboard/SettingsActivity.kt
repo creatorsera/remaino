@@ -19,6 +19,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -47,9 +48,11 @@ class SettingsActivity : Activity() {
     private lateinit var averageValue: TextView
     private lateinit var topWordsValue: TextView
     private lateinit var chart: BarChart
+    private lateinit var expireButton: Button
 
     private var pendingPassword: CharArray? = null
     private var pendingImport: ByteArray? = null
+    private var pendingIncludeClipboard = false
 
     private val bg = 0xFF121214.toInt()
     private val cardBg = 0xFF1C1C20.toInt()
@@ -138,7 +141,27 @@ class SettingsActivity : Activity() {
                 options.keyPreview = it
             },
         )
+        optionsCard.addView(
+            switchRow("Mascot", "A little friend who pushes the cursor back while you delete", options.mascot) {
+                options.mascot = it
+            },
+        )
         root.addView(optionsCard)
+
+        // Clipboard card
+        val clipCard = card()
+        clipCard.addView(label("Clipboard", 18f, textMain, true))
+        clipCard.addView(
+            switchRow(
+                "Save clipboard history",
+                "Kept encrypted on this phone. Passwords and private fields are skipped.",
+                options.clipboardEnabled,
+            ) { options.clipboardEnabled = it },
+        )
+        expireButton = pill(expireLabel()) { showExpireDialog() }
+        clipCard.addView(expireButton)
+        clipCard.addView(pill("Clear all clipboard history") { confirmClearClipboard() })
+        root.addView(clipCard)
 
         // Stats card
         val statsCard = card()
@@ -273,10 +296,14 @@ class SettingsActivity : Activity() {
     private fun showExportDialog() {
         val first = passwordField("Password (at least 8 characters)")
         val second = passwordField("Repeat password")
+        val includeClip = CheckBox(this).apply {
+            text = "Include clipboard history"
+            setTextColor(textMain)
+        }
         AlertDialog.Builder(this)
             .setTitle("Protect the backup")
             .setMessage("You will need this password to restore the backup. It cannot be recovered.")
-            .setView(dialogBox(first, second))
+            .setView(dialogBox(first, second, includeClip))
             .setPositiveButton("Choose file") { _, _ ->
                 val a = first.text.toString()
                 val b = second.text.toString()
@@ -286,6 +313,7 @@ class SettingsActivity : Activity() {
                     toast("The passwords do not match.")
                 } else {
                     pendingPassword = a.toCharArray()
+                    pendingIncludeClipboard = includeClip.isChecked
                     val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
                         addCategory(Intent.CATEGORY_OPENABLE)
                         type = "application/octet-stream"
@@ -319,7 +347,7 @@ class SettingsActivity : Activity() {
             REQ_EXPORT -> {
                 val password = pendingPassword
                 pendingPassword = null
-                if (password != null) runExport(uri, password)
+                if (password != null) runExport(uri, password, pendingIncludeClipboard)
             }
             REQ_IMPORT -> {
                 val bytes = try {
@@ -352,11 +380,11 @@ class SettingsActivity : Activity() {
             .show()
     }
 
-    private fun runExport(uri: Uri, password: CharArray) {
+    private fun runExport(uri: Uri, password: CharArray, includeClipboard: Boolean) {
         toast("Saving backup...")
         Thread {
             val message = try {
-                val bytes = BackupCrypto.encrypt(BackupManager.buildJson(this), password)
+                val bytes = BackupCrypto.encrypt(BackupManager.buildJson(this, includeClipboard), password)
                 val out = contentResolver.openOutputStream(uri) ?: throw BackupException("Could not write the file.")
                 out.use { it.write(bytes) }
                 "Backup saved."
@@ -399,6 +427,37 @@ class SettingsActivity : Activity() {
                 }
             }
         }.start()
+    }
+
+    private val expireChoices = intArrayOf(1, 24, 168, 0)
+    private val expireNames = arrayOf("1 hour", "24 hours", "7 days", "Never")
+
+    private fun expireLabel(): String {
+        val i = expireChoices.indexOf(options.clipboardExpireHours)
+        val name = if (i >= 0) expireNames[i] else "${options.clipboardExpireHours} hours"
+        return "Delete unpinned after: $name"
+    }
+
+    private fun showExpireDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("Delete unpinned items after")
+            .setItems(expireNames) { _, which ->
+                options.clipboardExpireHours = expireChoices[which]
+                expireButton.text = expireLabel()
+            }
+            .show()
+    }
+
+    private fun confirmClearClipboard() {
+        AlertDialog.Builder(this)
+            .setTitle("Clear clipboard history")
+            .setMessage("This deletes every saved item, including pinned ones.")
+            .setPositiveButton("Clear all") { _, _ ->
+                ClipboardStore.get(this).clearAll()
+                toast("Clipboard history cleared.")
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun toast(message: String) {

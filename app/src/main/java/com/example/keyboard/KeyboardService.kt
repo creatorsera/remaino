@@ -1,5 +1,6 @@
 package com.example.keyboard
 
+import android.content.ClipboardManager
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
@@ -19,6 +20,9 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
     private val engine = SuggestionEngine()
     private val composing = StringBuilder()
 
+    private var clipManager: ClipboardManager? = null
+    private val clipListener = ClipboardManager.OnPrimaryClipChangedListener { captureClip() }
+
     private var sensitive = false
     private var useComposing = true
     private var enterAction = EditorInfo.IME_ACTION_NONE
@@ -28,6 +32,13 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         super.onCreate()
         stats = TypingStats(this)
         wordFreq = WordFrequencies.get(this)
+        clipManager = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+        clipManager?.addPrimaryClipChangedListener(clipListener)
+    }
+
+    override fun onDestroy() {
+        clipManager?.removePrimaryClipChangedListener(clipListener)
+        super.onDestroy()
     }
 
     override fun onCreateInputView(): View {
@@ -59,7 +70,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
             action != EditorInfo.IME_ACTION_UNSPECIFIED
 
         val options = KeyboardPrefs(this)
-        keyboardView.applySettings(options.showNumberRow, options.keyPreview)
+        keyboardView.applySettings(options.showNumberRow, options.keyPreview, options.mascot)
         keyboardView.closeTray()
         keyboardView.setSensitive(sensitive)
         keyboardView.setSymbols(
@@ -186,6 +197,13 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         refreshSuggestions()
     }
 
+    override fun onPaste(text: String) {
+        val ic = currentInputConnection ?: return
+        finishWord()
+        ic.commitText(text, 1)
+        refreshSuggestions()
+    }
+
     override fun onGlobe() {
         finishWord()
         if (!switchToNextInputMethod(false)) {
@@ -208,6 +226,23 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
     }
 
     // ---------- helpers ----------
+
+    /** Saves copied text to the encrypted clipboard history. Skips sensitive and private content. */
+    private fun captureClip() {
+        if (sensitive) return
+        val cm = clipManager ?: return
+        val clip: android.content.ClipData? = try {
+            cm.primaryClip
+        } catch (e: SecurityException) {
+            null
+        }
+        if (clip == null || clip.itemCount == 0) return
+        val flagged = clip.description?.extras?.getBoolean("android.content.extra.IS_SENSITIVE", false) == true
+        if (flagged) return
+        val text = clip.getItemAt(0).coerceToText(this)?.toString() ?: return
+        if (text.isBlank() || text.length > 5000) return
+        ClipboardStore.get(this).add(text)
+    }
 
     private fun finishWord() {
         if (composing.isEmpty()) return

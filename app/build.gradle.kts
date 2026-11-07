@@ -10,12 +10,21 @@ android {
         applicationId = "com.example.keyboard"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
+        // CI run number keeps versionCode rising so every new build can update the last one
+        versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
         versionName = "0.1.0"
     }
 
     // Release signing is only configured when the CI release job provides a keystore.
     signingConfigs {
+        // One fixed debug key shared by every build, so a new debug APK can replace the old one.
+        // (It is the standard public Android debug key, not a secret.)
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
         create("release") {
             val keystorePath = System.getenv("KEYSTORE_PATH")
             if (keystorePath != null) {

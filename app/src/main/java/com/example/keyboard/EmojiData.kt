@@ -5,7 +5,7 @@ import org.json.JSONArray
 
 /** Built-in emoji (no skin tones or joined sequences, so they work on older phones). */
 object EmojiData {
-    class Category(val icon: String, val emojis: List<String>)
+    class Category(val name: String, val emojis: List<String>)
 
     // Single characters that need the "emoji style" marker to draw in color.
     private val extraText = setOf(
@@ -26,7 +26,7 @@ object EmojiData {
 
     val categories: List<Category> = listOf(
         Category(
-            present("😀"),
+            "Smileys",
             list(
                 "😀 😃 😄 😁 😆 😅 😂 🤣 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😋 😛 😜 🤪 😎 🤩 🥳 😏 😒 😞 😔 😟 😕 🙁 " +
                     "😣 😖 😫 😩 🥺 😢 😭 😤 😠 😡 🤬 🤯 😳 🥵 🥶 😱 😨 😰 😥 😓 🤗 🤔 🤭 🤫 😶 😐 😑 😬 🙄 😯 😲 " +
@@ -34,14 +34,14 @@ object EmojiData {
             ),
         ),
         Category(
-            present("👋"),
+            "People",
             list(
                 "👋 🤚 ✋ 🖖 👌 🤏 ✌ 🤞 🤟 🤘 🤙 👈 👉 👆 👇 ☝ 👍 👎 ✊ 👊 🤛 🤜 👏 🙌 👐 🤲 🤝 🙏 ✍ 💅 🤳 💪 " +
                     "🧠 👀 👁 👅 👄 👶 👦 👧 👨 👩 🧑 👴 👵 🙋 🙆 🙅 🤦 🤷 💁 🙇",
             ),
         ),
         Category(
-            present("🐶"),
+            "Animals & nature",
             list(
                 "🐶 🐱 🐭 🐹 🐰 🦊 🐻 🐼 🐨 🐯 🦁 🐮 🐷 🐸 🐵 🙈 🙉 🙊 🐔 🐧 🐦 🐤 🦆 🦅 🦉 🦇 🐺 🐗 🐴 🦄 🐝 🐛 " +
                     "🦋 🐌 🐞 🐜 🐢 🐍 🦎 🐙 🦑 🦐 🦀 🐡 🐠 🐟 🐬 🐳 🐋 🦈 🐊 🐅 🐆 🦓 🦍 🐘 🦒 🐪 🌵 🌴 🌲 🌳 🌱 " +
@@ -49,7 +49,7 @@ object EmojiData {
             ),
         ),
         Category(
-            present("🍔"),
+            "Food & drink",
             list(
                 "🍏 🍎 🍐 🍊 🍋 🍌 🍉 🍇 🍓 🍈 🍒 🍑 🥭 🍍 🥥 🥝 🍅 🍆 🥑 🥦 🥕 🌽 🌶 🥔 🍠 🥐 🍞 🥖 🧀 🥚 🍳 🥞 " +
                     "🥓 🥩 🍗 🍖 🌭 🍔 🍟 🍕 🥪 🌮 🌯 🥗 🍝 🍜 🍲 🍛 🍣 🍱 🥟 🍤 🍙 🍚 🍘 🍥 🍢 🍡 🍧 🍨 🍦 🍰 🎂 " +
@@ -57,21 +57,21 @@ object EmojiData {
             ),
         ),
         Category(
-            present("⚽"),
+            "Activities",
             list(
                 "⚽ 🏀 🏈 ⚾ 🎾 🏐 🏉 🎱 🏓 🏸 🥅 🏒 🏏 ⛳ 🏹 🎣 🥊 🥋 🎽 ⛸ 🎿 🏂 🏆 🥇 🥈 🥉 🏅 🎖 🎮 🎯 🎲 🎰 " +
                     "🎳 🎭 🎨 🎬 🎤 🎧 🎼 🎹 🥁 🎷 🎺 🎸 🎻",
             ),
         ),
         Category(
-            present("🚗"),
+            "Travel & places",
             list(
                 "🚗 🚕 🚙 🚌 🚎 🏎 🚓 🚑 🚒 🚐 🚚 🚛 🚜 🏍 🛵 🚲 🛴 🚨 🚔 🚍 🚘 ✈ 🛫 🛬 🚀 🛸 🚁 ⛵ 🚤 🛳 ⚓ 🚂 " +
                     "🚆 🚇 🚊 🗺 🗽 🗼 🏰 🏯 🏟 🎡 🎢 🎠 ⛲ 🏖 🏝 🏜 🌋 🏔 ⛰ 🏕 🏠 🏡 🏢 🏥 🏦 🏨 🏪 🏫 🌅 🌄 🌇 🌃 🌉 🌌",
             ),
         ),
         Category(
-            present("💡"),
+            "Objects",
             list(
                 "⌚ 📱 💻 ⌨ 🖥 🖨 🖱 💽 💾 💿 📷 📹 🎥 📞 ☎ 📺 📻 ⏰ 🔋 🔌 💡 🔦 🕯 💸 💵 💴 💶 💷 💰 💳 💎 🔧 " +
                     "🔨 ⚒ 🛠 ⛏ 🔩 ⚙ 💣 🔪 🛡 🔮 📿 💈 🔭 🔬 💊 💉 🌡 🧹 🧺 🔑 🗝 🚪 🛏 🚽 🚿 🛁 📦 📫 ✉ 📝 📁 " +
@@ -79,7 +79,7 @@ object EmojiData {
             ),
         ),
         Category(
-            present("❤"),
+            "Symbols",
             list(
                 "❤ 🧡 💛 💚 💙 💜 🖤 🤍 🤎 💔 ❣ 💕 💞 💓 💗 💖 💘 💝 ✨ ⭐ 🌟 💫 ⚡ 🔥 💥 ☀ 🌙 ☁ ❄ 🌈 ✅ ❌ " +
                     "❓ ❗ ➕ ➖ 💯 🔴 🟠 🟡 🟢 🔵 🟣 ⚫ ⚪ 🔔 🎵 🎶 ♻ ⚠ 🚫 🔞 ➡ ⬅ ⬆ ⬇",

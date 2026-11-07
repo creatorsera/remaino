@@ -3,18 +3,22 @@
 A private, fast, dark-by-default Android keyboard with a rounded top toolbar. Open source.
 
 ## What works in v0.1
-- Five-row layout inspired by Gboard: number row, QWERTY, shift (double-tap for caps lock), backspace with hold-to-repeat, symbols page, round `?123` pill, emoji-over-comma key, globe, space bar, period and a light round Enter bubble
 - Dark theme (shades of black) with a rounded top toolbar: grid icon, three suggestions, mic icon. Tap the grid icon to swap suggestions for icons
-- Letter preview bubble above the pressed key (can be turned off)
-- Number row can be turned off in the app (the keyboard then has four rows)
-- Emoji panel: tap the emoji-over-comma key (hold it) or the smile icon in the tray. Categories, scrolling grid, recents
+- Wide, short keys in a four-row layout: QWERTY, shift (double-tap for caps lock), backspace with hold-to-repeat, symbols page, round `?123` pill, emoji-over-comma key, globe, space bar, period and a light round Enter bubble
+- Options in the app (all off by default except the mascot): number row, key preview bubble, mascot
+- Mascot: while you delete, the toolbar turns into a lane where a small friend pushes a blinking cursor back
+- Emoji sheet: one long scrolling sheet (Recent first, then Smileys, People, and so on) with icon tabs that jump to each section. Open it with the smile icon in the tray or by holding the emoji-over-comma key
+- Clipboard manager: copied text is saved encrypted (Android Keystore) with pinning, delete, pause and clear. Sensitive copies and private fields are skipped. Items expire after a time you choose (pinned items never do)
 - Word suggestions from a small built-in list plus the words you use most (counts only)
-- Private fields (passwords): no suggestions, no learning, no counting
-- App screen: setup steps, try box, options, typing stats (today, total, books, streak, best day, 7-day chart, most used words) and encrypted backup
-- Backup: Export and Import a password-protected file (AES-256-GCM, PBKDF2-SHA256). A forgotten password cannot be recovered
+- Private fields (passwords): no suggestions, no learning, no counting, no clipboard saving
+- App screen: setup steps, try box, options, clipboard settings, typing stats and encrypted backup
+- Backup: password-protected file (AES-256-GCM, PBKDF2-SHA256). Clipboard history is included only if you tick the box when exporting. A forgotten password cannot be recovered
 
 ## Not built yet (icons show "Coming soon")
-Clipboard manager, voice typing, themes, Urdu layout, swipe typing, autocorrect, password-manager autofill chips. GIFs are planned after v1.
+Voice typing, themes, Urdu layout, swipe typing, autocorrect, password-manager autofill chips. GIFs are planned after v1.
+
+## Installing new builds over old ones
+Debug builds from GitHub Actions are all signed with the shared key in `app/debug.keystore`, and the version number rises with every run, so a new APK updates the old one. If you installed a build from before this change, uninstall it once (the signing key was different). Release APKs use your own key, so uninstall the debug build before installing a release build.
 
 ## Privacy
 See PRIVACY.md. No internet permission, no analytics, no accounts.
@@ -66,6 +70,7 @@ To create the Gradle wrapper once: `gradle wrapper --gradle-version 9.6.0` and c
 | `EmojiData.kt` | Emoji lists and recents |
 | `KeyboardPrefs.kt` | Options (number row, key preview) |
 | `Backup.kt` | Encrypted export and import |
+| `Clipboard.kt` | Encrypted clipboard history |
 | `TypingStats.kt` | Word counts and book stats (numbers only) |
 | `SettingsActivity.kt` | Setup and stats screen |
 | `.github/workflows/` | CI build and release |
