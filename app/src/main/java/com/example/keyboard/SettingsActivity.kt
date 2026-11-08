@@ -217,6 +217,8 @@ class SettingsActivity : Activity() {
         // Set up
         val setup = card()
         setup.addView(sectionHeader("Set up"))
+        enabledStatus = label("", 11f, textFaint, false)
+        selectedStatus = label("", 11f, textFaint, false)
         setup.addView(stepRow("Enable keyboard", enabledStatus, {
             startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
         }))
