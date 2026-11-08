@@ -140,7 +140,8 @@ class SettingsActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        val active = isEnabled() && isSelected()        enabledStatus.text = if (isEnabled()) "Enabled" else "Not enabled yet"
+        val active = isEnabled() && isSelected()
+        enabledStatus.text = if (isEnabled()) "Enabled" else "Not enabled yet"
         selectedStatus.text = if (isSelected()) "In use" else "Not selected yet"
         statusChip.text = if (active) "Active" else "Set up"
         statusChip.setTextColor(if (active) lime else 0xFFE8B063.toInt())

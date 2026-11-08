@@ -6,6 +6,8 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.inputmethodservice.InputMethodService
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.text.InputType
 import android.view.KeyEvent
@@ -49,6 +51,8 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
     private var caretScreenTop = Float.NaN
     private var mascotVisibleNow = false
     private var mascotDeletingNow = false
+
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private var sensitive = false
     private var useComposing = true
@@ -458,9 +462,9 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
                 dir.listFiles()?.sortedBy { it.lastModified() }?.dropLast(10)?.forEach { it.delete() }
                 val file = File(dir, "clip_${item.time}.$ext")
                 file.writeBytes(bytes)
-                runOnUiThread { commitImage(file, mime) }
+                mainHandler.post { commitImage(file, mime) }
             } catch (e: Exception) {
-                runOnUiThread {
+                mainHandler.post {
                     Toast.makeText(this, "Could not paste that image.", Toast.LENGTH_SHORT).show()
                 }
             }
@@ -560,7 +564,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
                 if (bytes.isEmpty()) return@Thread
                 val base64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
                 ClipboardStore.get(this).addImage(base64)
-                runOnUiThread {
+                mainHandler.post {
                     if (::keyboardView.isInitialized && isInputViewShown) {
                         keyboardView.showCopiedChip("Image copied")
                     }

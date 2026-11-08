@@ -672,7 +672,8 @@ class KeyboardView(context: Context) : View(context) {
         return bmp
     }
 
-    private fun tapClip(x: Float, y: Float) {        if (!contentRect.contains(x, y)) return
+    private fun tapClip(x: Float, y: Float) {
+        if (!contentRect.contains(x, y)) return
         val local = y - contentRect.top + scrollY
         val row = clipRows.firstOrNull { local >= it.y && local < it.y + it.height } ?: return
         val item = row.item ?: return
