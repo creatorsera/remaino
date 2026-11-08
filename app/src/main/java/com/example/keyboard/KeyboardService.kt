@@ -1,51 +1,134 @@
 package com.example.keyboard
 
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.inputmethodservice.InputMethodService
+import android.os.SystemClock
 import android.text.InputType
 import android.view.KeyEvent
 import android.view.View
+import android.view.ViewGroup
+import android.view.inputmethod.CursorAnchorInfo
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
+import android.widget.FrameLayout
 import android.widget.Toast
+import androidx.core.content.FileProvider
+import androidx.core.view.inputmethod.EditorInfoCompat
+import androidx.core.view.inputmethod.InputConnectionCompat
+import androidx.core.view.inputmethod.InputContentInfoCompat
+import java.io.File
 
 class KeyboardService : InputMethodService(), KeyboardView.Listener {
 
     private lateinit var keyboardView: KeyboardView
     private lateinit var stats: TypingStats
     private lateinit var wordFreq: WordFrequencies
+    private lateinit var bigrams: Bigrams
     private val engine = SuggestionEngine()
     private val composing = StringBuilder()
 
+    /** Word-level undo/redo. Each entry is a committed word (with its trailing space). */
+    private val undoStack = ArrayDeque<String>()
+    private val redoStack = ArrayDeque<String>()
+    private var lastWord = ""
+
     private var clipManager: ClipboardManager? = null
     private val clipListener = ClipboardManager.OnPrimaryClipChangedListener { captureClip() }
+    private lateinit var prefs: KeyboardPrefs
+
+    private lateinit var floatingHost: FloatingHost
+    private lateinit var mascotOverlay: MascotOverlay
+    private var inputRoot: FrameLayout? = null
+    private var hasCaret = false
+    private var caretScreenX = -1f
+    private var caretScreenTop = Float.NaN
+    private var mascotVisibleNow = false
+    private var mascotDeletingNow = false
 
     private var sensitive = false
     private var useComposing = true
     private var enterAction = EditorInfo.IME_ACTION_NONE
     private var enterIsAction = false
+    private var lastShiftTap = 0L
 
     override fun onCreate() {
         super.onCreate()
         stats = TypingStats(this)
         wordFreq = WordFrequencies.get(this)
+        bigrams = Bigrams(this)
+        prefs = KeyboardPrefs(this)
+        floatingHost = FloatingHost(this, prefs)
+        mascotOverlay = MascotOverlay(this)
         clipManager = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
         clipManager?.addPrimaryClipChangedListener(clipListener)
     }
 
     override fun onDestroy() {
         clipManager?.removePrimaryClipChangedListener(clipListener)
+        mascotOverlay.hide()
+        if (::keyboardView.isInitialized) floatingHost.hide(keyboardView)
         super.onDestroy()
     }
 
     override fun onCreateInputView(): View {
         // Transparent window so the rounded top corners show the app behind.
         window?.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-        keyboardView = KeyboardView(this).also { it.listener = this }
-        return keyboardView
+        if (!::keyboardView.isInitialized) {
+            keyboardView = KeyboardView(this).also { it.listener = this }
+        }
+        if (floatingHost.isShowing) floatingHost.hide(keyboardView)
+        (keyboardView.parent as? ViewGroup)?.removeView(keyboardView)
+        val root = FrameLayout(this)
+        root.addView(
+            keyboardView,
+            FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+        )
+        inputRoot = root
+        return root
+    }
+
+    /**
+     * Floating mode draws the keyboard in an overlay window and leaves a one-pixel strip as the
+     * real keyboard window. Normal mode puts the keyboard back in the real window.
+     */
+    private fun applyHostMode() {
+        val root = inputRoot ?: return
+        val wantFloating = prefs.floatingKeyboard && floatingHost.canUse()
+        if (wantFloating) {
+            if (!floatingHost.isShowing) {
+                (keyboardView.parent as? ViewGroup)?.removeView(keyboardView)
+                root.removeAllViews()
+                root.addView(View(this), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1))
+                if (!floatingHost.show(keyboardView)) {
+                    root.removeAllViews()
+                    root.addView(
+                        keyboardView,
+                        FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+                    )
+                    keyboardView.setFloating(false)
+                    return
+                }
+            }
+            keyboardView.dragListener = { dx, dy -> floatingHost.move(dx, dy) }
+            keyboardView.dragEndListener = { floatingHost.savePosition() }
+            keyboardView.setFloating(true)
+        } else {
+            if (floatingHost.isShowing) floatingHost.hide(keyboardView)
+            if (keyboardView.parent !== root) {
+                (keyboardView.parent as? ViewGroup)?.removeView(keyboardView)
+                root.removeAllViews()
+                root.addView(
+                    keyboardView,
+                    FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+                )
+            }
+            keyboardView.setFloating(false)
+        }
     }
 
     override fun onEvaluateFullscreenMode(): Boolean = false
@@ -54,11 +137,15 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         super.onStartInputView(info, restarting)
         if (info == null || !::keyboardView.isInitialized) return
         composing.clear()
+        undoStack.clear()
+        redoStack.clear()
+        lastWord = ""
 
         val cls = info.inputType and InputType.TYPE_MASK_CLASS
         val variation = info.inputType and InputType.TYPE_MASK_VARIATION
         val noLearning = (info.imeOptions and EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING) != 0
-        sensitive = isPasswordField(cls, variation) || noLearning
+        sensitive = isPasswordField(cls, variation) || noLearning ||
+            prefs.isSensitivePackage(info.packageName)
         useComposing = !sensitive && !isEmailOrUri(cls, variation)
 
         val action = info.imeOptions and EditorInfo.IME_MASK_ACTION
@@ -70,9 +157,15 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
             action != EditorInfo.IME_ACTION_UNSPECIFIED
 
         val options = KeyboardPrefs(this)
-        keyboardView.applySettings(options.showNumberRow, options.keyPreview, options.mascot)
+        applyHostMode()
+        hasCaret = false
+        caretScreenTop = Float.NaN
+        keyboardView.setOverlayMascot(false)
+        currentInputConnection?.requestCursorUpdates(InputConnection.CURSOR_UPDATE_MONITOR)
+        keyboardView.applySettings(options)
         keyboardView.closeTray()
         keyboardView.setSensitive(sensitive)
+        keyboardView.setFieldEmpty(isFieldEmpty())
         keyboardView.setSymbols(
             cls == InputType.TYPE_CLASS_NUMBER ||
                 cls == InputType.TYPE_CLASS_PHONE ||
@@ -84,6 +177,10 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
 
     override fun onFinishInputView(finishingInput: Boolean) {
         finishWord()
+        mascotOverlay.hide()
+        mascotVisibleNow = false
+        currentInputConnection?.requestCursorUpdates(0)
+        if (::keyboardView.isInitialized && floatingHost.isShowing) floatingHost.hide(keyboardView)
         super.onFinishInputView(finishingInput)
     }
 
@@ -108,8 +205,30 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
 
     private fun shouldAutoCapitalize(info: EditorInfo, cls: Int): Boolean {
         if (cls != InputType.TYPE_CLASS_TEXT || !useComposing) return false
-        val caps = currentInputConnection?.getCursorCapsMode(info.inputType) ?: 0
-        return caps != 0
+        val ic = currentInputConnection ?: return false
+        val caps = ic.getCursorCapsMode(info.inputType) ?: 0
+        if (caps == 0) return false
+        val before = ic.getTextBeforeCursor(1, 0)
+        val atStart = before.isNullOrEmpty()
+        return if (atStart) prefs.capitalizeFirstLetter else prefs.autoCapitalize
+    }
+
+    private fun isFieldEmpty(): Boolean {
+        val ic = currentInputConnection ?: return true
+        return ic.getTextBeforeCursor(1, 0).isNullOrEmpty()
+    }
+
+    private fun updateFieldEmpty() {
+        if (::keyboardView.isInitialized) keyboardView.setFieldEmpty(isFieldEmpty())
+    }
+
+    private fun nextAutoShift(): ShiftState =
+        if (prefs.autoCapitalize) ShiftState.ONE_SHOT else ShiftState.OFF
+
+    private fun titleCase(text: String): String {
+        val lower = text.lowercase()
+        if (lower.isEmpty()) return lower
+        return lower.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
     }
 
     // ---------- KeyboardView.Listener ----------
@@ -125,6 +244,44 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
             ic.commitText(text, 1)
         }
         refreshSuggestions()
+        updateFieldEmpty()
+    }
+
+    /**
+     * Shift with a selection cycles the case of the selected text:
+     * lowercase -> Title -> UPPERCASE -> lowercase. A double tap jumps to UPPERCASE.
+     * With nothing selected it toggles caps lock for the whole keyboard.
+     */
+    override fun onShift() {
+        val ic = currentInputConnection
+        val selected = try {
+            ic?.getSelectedText(0)?.toString()
+        } catch (e: Exception) {
+            null
+        }
+        if (!selected.isNullOrEmpty()) {
+            val now = SystemClock.uptimeMillis()
+            val doubleTap = now - lastShiftTap < 350L
+            lastShiftTap = now
+            val lower = selected.lowercase()
+            val upper = selected.uppercase()
+            val title = titleCase(selected)
+            val next = when {
+                doubleTap -> upper
+                selected == upper && upper != lower -> lower
+                selected == title -> upper
+                else -> title
+            }
+            ic?.commitText(next, 1)
+            keyboardView.setShift(ShiftState.OFF)
+            return
+        }
+        val next = if (keyboardView.shiftState == ShiftState.CAPS) {
+            ShiftState.OFF
+        } else {
+            ShiftState.CAPS
+        }
+        keyboardView.setShift(next)
     }
 
     override fun onBackspace() {
@@ -140,6 +297,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         } else {
             sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
         }
+        updateFieldEmpty()
     }
 
     override fun onSpace() {
@@ -151,16 +309,17 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         if (doubleSpace) {
             ic.deleteSurroundingText(1, 0)
             ic.commitText(". ", 1)
-            keyboardView.setShift(ShiftState.ONE_SHOT)
+            keyboardView.setShift(nextAutoShift())
         } else {
             ic.commitText(" ", 1)
             val after = ic.getTextBeforeCursor(2, 0)
             if (useComposing && after != null && after.length == 2 && after[1] == ' ' &&
                 (after[0] == '.' || after[0] == '!' || after[0] == '?')
             ) {
-                keyboardView.setShift(ShiftState.ONE_SHOT)
+                keyboardView.setShift(nextAutoShift())
             }
         }
+        keyboardView.setFieldEmpty(false)
         refreshSuggestions()
     }
 
@@ -171,13 +330,23 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
             ic.performEditorAction(enterAction)
         } else {
             sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER)
-            if (useComposing) keyboardView.setShift(ShiftState.ONE_SHOT)
+            if (useComposing) keyboardView.setShift(nextAutoShift())
         }
+        keyboardView.setFieldEmpty(false)
         refreshSuggestions()
     }
 
     override fun onSuggestion(word: String) {
         val ic = currentInputConnection ?: return
+        if (word.isNotEmpty() && word.none { it.isLetterOrDigit() }) {
+            // Emoji chip: insert as an emoji, not as a word with a trailing space.
+            composing.setLength(0)
+            ic.finishComposingText()
+            ic.commitText(EmojiData.withTone(word, prefs.emojiTone), 1)
+            keyboardView.setFieldEmpty(false)
+            refreshSuggestions()
+            return
+        }
         val typed = composing.toString()
         composing.setLength(0)
         val out = if (typed.isNotEmpty() && typed[0].isUpperCase()) {
@@ -187,13 +356,15 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         }
         ic.commitText("$out ", 1)
         countWord(word)
+        keyboardView.setFieldEmpty(false)
         refreshSuggestions()
     }
 
     override fun onEmoji(emoji: String) {
         val ic = currentInputConnection ?: return
         finishWord()
-        ic.commitText(emoji, 1)
+        ic.commitText(EmojiData.withTone(emoji, prefs.emojiTone), 1)
+        keyboardView.setFieldEmpty(false)
         refreshSuggestions()
     }
 
@@ -201,6 +372,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         val ic = currentInputConnection ?: return
         finishWord()
         ic.commitText(text, 1)
+        keyboardView.setFieldEmpty(false)
         refreshSuggestions()
     }
 
@@ -212,6 +384,24 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         }
     }
 
+    override fun onDeleteWord() {
+        val ic = currentInputConnection ?: return
+        finishWord()
+        val before = ic.getTextBeforeCursor(60, 0)?.toString() ?: return
+        if (before.isEmpty()) return
+        val trimmed = before.trimEnd()
+        if (trimmed.isEmpty()) {
+            ic.deleteSurroundingText(before.length, 0)
+        } else {
+            val lastSpace = trimmed.lastIndexOf(' ')
+            val count = before.length - (lastSpace + 1)
+            if (count > 0) ic.deleteSurroundingText(count, 0)
+        }
+        lastWord = ""
+        keyboardView.setFieldEmpty(isFieldEmpty())
+        refreshSuggestions()
+    }
+
     override fun onToolbarAction(action: ToolbarAction) {
         when (action) {
             ToolbarAction.SETTINGS -> {
@@ -220,9 +410,106 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
                 startActivity(intent)
             }
             ToolbarAction.LANGUAGE -> onGlobe()
+            ToolbarAction.UNDO -> undoWord()
+            ToolbarAction.REDO -> redoWord()
             ToolbarAction.MENU, ToolbarAction.CLOSE -> Unit
             else -> Toast.makeText(this, "Coming soon", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    // ---------- stickers, pasted images, cursor and mascot ----------
+
+    /** Sends an image file to the app through the keyboard image API. Returns true if it was accepted. */
+    private fun commitImage(file: File, mime: String): Boolean {
+        val info = currentInputEditorInfo
+        val ic = currentInputConnection
+        if (info == null || ic == null) return false
+        val accepted = EditorInfoCompat.getContentMimeTypes(info).any { ClipDescription.compareMimeTypes(mime, it) }
+        if (!accepted) {
+            Toast.makeText(this, "This app does not accept images from the keyboard.", Toast.LENGTH_SHORT).show()
+            return false
+        }
+        val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+        val content = InputContentInfoCompat(uri, ClipDescription("image", arrayOf(mime)), null)
+        return InputConnectionCompat.commitContent(
+            ic, info, content, InputConnectionCompat.INPUT_CONTENT_GRANT_READ_URI_PERMISSION, null,
+        )
+    }
+
+    override fun onStickerSend(text: String, palette: Int): Boolean {
+        return try {
+            val file = StickerMaker.save(this, StickerMaker.render(text, palette))
+            commitImage(file, "image/png")
+        } catch (e: Exception) {
+            Toast.makeText(this, "Could not make the sticker.", Toast.LENGTH_SHORT).show()
+            false
+        }
+    }
+
+    override fun onPasteImage(item: ClipItem) {
+        val encoded = item.image ?: return
+        Thread {
+            try {
+                val bytes = android.util.Base64.decode(encoded, android.util.Base64.NO_WRAP)
+                val mime = sniffMime(bytes)
+                val ext = mime.substringAfter('/')
+                val dir = File(cacheDir, "pasted")
+                dir.mkdirs()
+                dir.listFiles()?.sortedBy { it.lastModified() }?.dropLast(10)?.forEach { it.delete() }
+                val file = File(dir, "clip_${item.time}.$ext")
+                file.writeBytes(bytes)
+                runOnUiThread { commitImage(file, mime) }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    Toast.makeText(this, "Could not paste that image.", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }.start()
+    }
+
+    private fun sniffMime(b: ByteArray): String = when {
+        b.size > 3 && b[0] == 0x89.toByte() && b[1] == 0x50.toByte() -> "image/png"
+        b.size > 2 && b[0] == 0xFF.toByte() && b[1] == 0xD8.toByte() -> "image/jpeg"
+        b.size > 3 && b[0] == 'G'.code.toByte() && b[1] == 'I'.code.toByte() -> "image/gif"
+        b.size > 11 && b[8] == 'W'.code.toByte() && b[9] == 'E'.code.toByte() -> "image/webp"
+        else -> "image/png"
+    }
+
+    override fun onUpdateCursorAnchorInfo(cursorAnchorInfo: CursorAnchorInfo?) {
+        super.onUpdateCursorAnchorInfo(cursorAnchorInfo)
+        val info = cursorAnchorInfo ?: return
+        val horizontal = info.insertionMarkerHorizontal
+        if (horizontal.isNaN()) return
+        val points = floatArrayOf(horizontal, info.insertionMarkerTop)
+        info.matrix.mapPoints(points)
+        caretScreenX = points[0]
+        caretScreenTop = points[1]
+        hasCaret = true
+        if (::keyboardView.isInitialized) keyboardView.setCaretX(caretScreenX - floatingHost.offsetX)
+        updateMascotOverlay()
+    }
+
+    override fun onMascotState(visible: Boolean, deleting: Boolean) {
+        mascotVisibleNow = visible
+        mascotDeletingNow = deleting
+        updateMascotOverlay()
+    }
+
+    /** Draws the mascot on the real caret when the user chose "At cursor" and allowed overlays. */
+    private fun updateMascotOverlay() {
+        if (!::keyboardView.isInitialized) return
+        val wanted = prefs.mascot && prefs.mascotPlacement == MascotPlacement.CURSOR &&
+            mascotOverlay.canShow() && hasCaret
+        keyboardView.setOverlayMascot(wanted)
+        if (!wanted || !mascotVisibleNow || caretScreenTop.isNaN()) {
+            mascotOverlay.hide()
+            return
+        }
+        val dm = resources.displayMetrics
+        val size = mascotOverlay.sizePx
+        val x = (caretScreenX + 16 * dm.density - size / 2f).toInt().coerceIn(0, maxOf(0, dm.widthPixels - size))
+        val y = (caretScreenTop - 12 * dm.density - size / 2f).toInt().coerceAtLeast(0)
+        mascotOverlay.show(x, y, mascotDeletingNow)
     }
 
     // ---------- helpers ----------
@@ -239,9 +526,49 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         if (clip == null || clip.itemCount == 0) return
         val flagged = clip.description?.extras?.getBoolean("android.content.extra.IS_SENSITIVE", false) == true
         if (flagged) return
-        val text = clip.getItemAt(0).coerceToText(this)?.toString() ?: return
+        val item = clip.getItemAt(0)
+        val uri = item.uri
+        if (uri != null && prefs.clipboardImages) {
+            captureImage(uri)
+            return
+        }
+        val text = item.coerceToText(this)?.toString() ?: return
         if (text.isBlank() || text.length > 5000) return
         ClipboardStore.get(this).add(text)
+        if (::keyboardView.isInitialized && isInputViewShown) {
+            keyboardView.showCopiedChip(text)
+        }
+    }
+
+    /** Reads an image clip (max 10 MB) and stores it encrypted in the clipboard history. */
+    private fun captureImage(uri: android.net.Uri) {
+        Thread {
+            try {
+                val bytes = contentResolver.openInputStream(uri)?.use { input ->
+                    val out = java.io.ByteArrayOutputStream()
+                    val buf = ByteArray(16 * 1024)
+                    var total = 0
+                    while (true) {
+                        val read = input.read(buf)
+                        if (read < 0) break
+                        total += read
+                        if (total > 10 * 1024 * 1024) return@Thread
+                        out.write(buf, 0, read)
+                    }
+                    out.toByteArray()
+                } ?: return@Thread
+                if (bytes.isEmpty()) return@Thread
+                val base64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                ClipboardStore.get(this).addImage(base64)
+                runOnUiThread {
+                    if (::keyboardView.isInitialized && isInputViewShown) {
+                        keyboardView.showCopiedChip("Image copied")
+                    }
+                }
+            } catch (e: Exception) {
+                // Ignore unreadable images.
+            }
+        }.start()
     }
 
     private fun finishWord() {
@@ -257,6 +584,44 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         if (sensitive) return
         stats.addWord()
         wordFreq.increment(word)
+        val clean = word.trim().lowercase()
+        if (clean.isNotEmpty() && !SuggestionFilter.isBlocked(clean)) {
+            if (lastWord.isNotEmpty()) bigrams.add(lastWord, clean)
+            lastWord = clean
+            undoStack.addLast(word)
+            if (undoStack.size > MAX_UNDO) undoStack.removeFirst()
+            redoStack.clear()
+        }
+    }
+
+    /** Deletes the last committed word (and its trailing space) and remembers it for redo. */
+    private fun undoWord() {
+        val ic = currentInputConnection ?: return
+        if (composing.isNotEmpty()) {
+            composing.setLength(0)
+            ic.finishComposingText()
+        }
+        val word = undoStack.removeLastOrNull() ?: return
+        val before = ic.getTextBeforeCursor(word.length + 1, 0)?.toString()
+        if (before == "$word ") {
+            ic.deleteSurroundingText(word.length + 1, 0)
+        } else {
+            ic.deleteSurroundingText(word.length, 0)
+        }
+        redoStack.addLast(word)
+        lastWord = if (undoStack.isEmpty()) "" else undoStack.last().trim().lowercase()
+        keyboardView.setFieldEmpty(isFieldEmpty())
+        refreshSuggestions()
+    }
+
+    private fun redoWord() {
+        val ic = currentInputConnection ?: return
+        val word = redoStack.removeLastOrNull() ?: return
+        ic.commitText("$word ", 1)
+        undoStack.addLast(word)
+        lastWord = word.trim().lowercase()
+        keyboardView.setFieldEmpty(false)
+        refreshSuggestions()
     }
 
     private fun refreshSuggestions() {
@@ -267,10 +632,35 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         }
         val typed = composing.toString()
         val list = if (typed.isEmpty()) {
-            SuggestionEngine.DEFAULTS
+            val next = if (prefs.nextWordSuggestions && lastWord.isNotEmpty()) {
+                bigrams.followers(lastWord, 2)
+            } else {
+                emptyList()
+            }
+            val emoji = if (prefs.emojiPrediction && lastWord.isNotEmpty()) {
+                EmojiPredict.forWord(lastWord)
+            } else {
+                null
+            }
+            val base = SuggestionEngine.DEFAULTS
+            val merged = (next + listOfNotNull(emoji) + base)
+                .distinct()
+            if (prefs.blockInappropriate) SuggestionFilter.clean(merged) else merged
         } else {
-            listOf(typed) + engine.suggest(typed, wordFreq.snapshot(), 2)
+            val english = engine.suggest(typed, wordFreq.snapshot(), 2)
+            val completions = (english + RomanUrdu.complete(typed, 2)).distinct().take(2)
+            val urdu = RomanUrdu.lookup(typed)
+            val raw = if (urdu != null) {
+                listOf(typed) + completions.take(1) + urdu
+            } else {
+                listOf(typed) + completions
+            }
+            if (prefs.blockInappropriate) SuggestionFilter.clean(raw) else raw
         }
         keyboardView.setSuggestions(list)
+    }
+
+    private companion object {
+        const val MAX_UNDO = 40
     }
 }

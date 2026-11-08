@@ -21,6 +21,31 @@ object EmojiData {
         return if (single && (cp in 0x2100..0x2BFF || cp in extraText)) e + "\uFE0F" else e
     }
 
+    /** Code points of the common hand/people emoji that accept a skin tone modifier. */
+    private fun supportsTone(cp: Int): Boolean = when (cp) {
+        0x261D, 0x270A, 0x270B, 0x270C, 0x270D, 0x1F574 -> true
+        in 0x1F466..0x1F469 -> true
+        in 0x1F44A..0x1F450 -> true
+        in 0x1F590..0x1F596 -> true
+        in 0x1F645..0x1F64F -> true
+        in 0x1F930..0x1F93C -> true
+        in 0x1F9D1..0x1FAF8 -> true
+        else -> false
+    }
+
+    /**
+     * Applies the global skin tone (1..5 = light..dark) to an emoji when it
+     * supports one. Anything else is returned unchanged.
+     */
+    fun withTone(emoji: String, tone: Int): String {
+        if (tone !in 1..5 || emoji.isEmpty()) return emoji
+        val cp = emoji.codePointAt(0)
+        if (!supportsTone(cp)) return emoji
+        val end = Character.charCount(cp)
+        val modifier = String(Character.toChars(0x1F3FB + (tone - 1)))
+        return emoji.substring(0, end) + modifier + emoji.substring(end)
+    }
+
     private fun list(s: String): List<String> =
         s.trim().split(" ").filter { it.isNotEmpty() }.map { present(it) }
 
@@ -86,6 +111,36 @@ object EmojiData {
             ),
         ),
     )
+
+    // ----- search -----
+
+    private fun norm(e: String): String = e.replace("\uFE0F", "")
+
+    private val keywordMap: Map<String, List<String>> by lazy {
+        val map = HashMap<String, List<String>>()
+        for (line in EmojiKeywords.RAW.lines()) {
+            val parts = line.trim().split(" ").filter { it.isNotEmpty() }
+            if (parts.size >= 2) map[norm(parts[0])] = parts.drop(1).map { it.lowercase() }
+        }
+        map
+    }
+
+    private val allEmoji: List<String> by lazy { categories.flatMap { it.emojis } }
+
+    /** Emoji whose keywords start with every word you typed, e.g. "pizza" or "laugh". */
+    fun search(query: String, limit: Int = 40): List<String> {
+        val tokens = query.lowercase().trim().split(" ").filter { it.isNotEmpty() }
+        if (tokens.isEmpty()) return emptyList()
+        val out = ArrayList<String>()
+        for (e in allEmoji) {
+            val words = keywordMap[norm(e)] ?: continue
+            if (tokens.all { t -> words.any { it.startsWith(t) } }) {
+                out.add(e)
+                if (out.size >= limit) break
+            }
+        }
+        return out
+    }
 }
 
 /** Emoji you used most recently (stored on the device only). */

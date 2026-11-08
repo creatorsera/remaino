@@ -1,73 +1,280 @@
 package com.example.keyboard
 
 import android.content.Context
+import org.json.JSONArray
 import org.json.JSONObject
 
-/** Keyboard options chosen in the settings screen. */
+/** Where the mascot is drawn. CURSOR needs the "display over other apps" permission. */
+enum class MascotPlacement(val key: String) {
+    TOOLBAR("toolbar"),
+    ABOVE("above"),
+    CURSOR("cursor");
+
+    companion object {
+        fun from(value: String?): MascotPlacement =
+            entries.firstOrNull { it.key == value } ?: ABOVE
+    }
+}
+
+/**
+ * Keyboard options chosen in the settings screen.
+ *
+ * Settings are versioned. migrate() runs once per install/upgrade and fills in the
+ * new keys without touching anything the user already chose.
+ */
 class KeyboardPrefs(context: Context) {
     private val prefs = context.applicationContext
         .getSharedPreferences("keyboard_settings", Context.MODE_PRIVATE)
 
+    init {
+        migrate()
+    }
+
+    // ---- keyboard ----
     var showNumberRow: Boolean
         get() = prefs.getBoolean(KEY_NUMBER_ROW, false)
-        set(value) {
-            prefs.edit().putBoolean(KEY_NUMBER_ROW, value).apply()
-        }
+        set(value) { prefs.edit().putBoolean(KEY_NUMBER_ROW, value).apply() }
 
     var keyPreview: Boolean
         get() = prefs.getBoolean(KEY_PREVIEW, false)
-        set(value) {
-            prefs.edit().putBoolean(KEY_PREVIEW, value).apply()
-        }
+        set(value) { prefs.edit().putBoolean(KEY_PREVIEW, value).apply() }
 
-    /** The little mascot that pushes the cursor back while you delete. */
+    /** The little mascot that keeps the caret company. */
     var mascot: Boolean
         get() = prefs.getBoolean(KEY_MASCOT, true)
-        set(value) {
-            prefs.edit().putBoolean(KEY_MASCOT, value).apply()
-        }
+        set(value) { prefs.edit().putBoolean(KEY_MASCOT, value).apply() }
 
+    var mascotPlacement: MascotPlacement
+        get() = MascotPlacement.from(prefs.getString(KEY_MASCOT_PLACEMENT, null))
+        set(value) { prefs.edit().putString(KEY_MASCOT_PLACEMENT, value.key).apply() }
+
+    var haptics: Boolean
+        get() = prefs.getBoolean(KEY_HAPTICS, true)
+        set(value) { prefs.edit().putBoolean(KEY_HAPTICS, value).apply() }
+
+    var sound: Boolean
+        get() = prefs.getBoolean(KEY_SOUND, false)
+        set(value) { prefs.edit().putBoolean(KEY_SOUND, value).apply() }
+
+    /** Capitalise the start of a sentence automatically. */
+    var autoCapitalize: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_CAP, true)
+        set(value) { prefs.edit().putBoolean(KEY_AUTO_CAP, value).apply() }
+
+    /** Capitalise the first letter when a new field is opened. */
+    var capitalizeFirstLetter: Boolean
+        get() = prefs.getBoolean(KEY_CAP_FIRST, true)
+        set(value) { prefs.edit().putBoolean(KEY_CAP_FIRST, value).apply() }
+
+    var nextWordSuggestions: Boolean
+        get() = prefs.getBoolean(KEY_NEXT_WORD, true)
+        set(value) { prefs.edit().putBoolean(KEY_NEXT_WORD, value).apply() }
+
+    var emojiPrediction: Boolean
+        get() = prefs.getBoolean(KEY_EMOJI_PREDICTION, true)
+        set(value) { prefs.edit().putBoolean(KEY_EMOJI_PREDICTION, value).apply() }
+
+    var blockInappropriate: Boolean
+        get() = prefs.getBoolean(KEY_BLOCK_INAPPROPRIATE, true)
+        set(value) { prefs.edit().putBoolean(KEY_BLOCK_INAPPROPRIATE, value).apply() }
+
+    /** 0 = no skin tone, 1..5 = U+1F3FB..U+1F3FF. */
+    var emojiTone: Int
+        get() = prefs.getInt(KEY_EMOJI_TONE, 0)
+        set(value) { prefs.edit().putInt(KEY_EMOJI_TONE, value.coerceIn(0, 5)).apply() }
+
+    /** Keyboard height as a percentage of the default (80..130). */
+    var keyboardHeightPercent: Int
+        get() = prefs.getInt(KEY_HEIGHT_PERCENT, 100)
+        set(value) { prefs.edit().putInt(KEY_HEIGHT_PERCENT, value.coerceIn(80, 130)).apply() }
+
+    /** Extra space under the keys, in dp (0..24). */
+    var keyboardPadding: Int
+        get() = prefs.getInt(KEY_BOTTOM_PADDING, 0)
+        set(value) { prefs.edit().putInt(KEY_BOTTOM_PADDING, value.coerceIn(0, 24)).apply() }
+
+    /** Draw the keyboard in a movable overlay window. Needs "display over other apps". */
+    var floatingKeyboard: Boolean
+        get() = prefs.getBoolean(KEY_FLOATING, false)
+        set(value) { prefs.edit().putBoolean(KEY_FLOATING, value).apply() }
+
+    /** Last position of the floating keyboard in pixels, or -1 when it was never moved. */
+    var floatingX: Int
+        get() = prefs.getInt(KEY_FLOATING_X, -1)
+        set(value) { prefs.edit().putInt(KEY_FLOATING_X, value).apply() }
+
+    var floatingY: Int
+        get() = prefs.getInt(KEY_FLOATING_Y, -1)
+        set(value) { prefs.edit().putInt(KEY_FLOATING_Y, value).apply() }
+
+    // ---- clipboard ----
     var clipboardEnabled: Boolean
         get() = prefs.getBoolean(KEY_CLIP_ENABLED, true)
-        set(value) {
-            prefs.edit().putBoolean(KEY_CLIP_ENABLED, value).apply()
-        }
+        set(value) { prefs.edit().putBoolean(KEY_CLIP_ENABLED, value).apply() }
 
     /** Paused from the clipboard panel. Not part of backups. */
     var clipboardPaused: Boolean
         get() = prefs.getBoolean(KEY_CLIP_PAUSED, false)
-        set(value) {
-            prefs.edit().putBoolean(KEY_CLIP_PAUSED, value).apply()
-        }
+        set(value) { prefs.edit().putBoolean(KEY_CLIP_PAUSED, value).apply() }
 
     /** Hours before unpinned clipboard items are deleted. 0 means never. */
     var clipboardExpireHours: Int
         get() = prefs.getInt(KEY_CLIP_EXPIRE, 24)
-        set(value) {
-            prefs.edit().putInt(KEY_CLIP_EXPIRE, value).apply()
+        set(value) { prefs.edit().putInt(KEY_CLIP_EXPIRE, value).apply() }
+
+    var clipboardImages: Boolean
+        get() = prefs.getBoolean(KEY_CLIP_IMAGES, true)
+        set(value) { prefs.edit().putBoolean(KEY_CLIP_IMAGES, value).apply() }
+
+    // ---- privacy ----
+    var perAppSensitive: Boolean
+        get() = prefs.getBoolean(KEY_PER_APP_SENSITIVE, true)
+        set(value) { prefs.edit().putBoolean(KEY_PER_APP_SENSITIVE, value).apply() }
+
+    fun sensitivePackages(): Set<String> {
+        val raw = prefs.getString(KEY_SENSITIVE_PACKAGES, null) ?: return emptySet()
+        return try {
+            val arr = JSONArray(raw)
+            buildSet { for (i in 0 until arr.length()) add(arr.optString(i)) }
+        } catch (e: Exception) {
+            emptySet()
         }
+    }
+
+    fun setSensitivePackages(packages: Set<String>) {
+        val arr = JSONArray()
+        packages.filter { it.isNotBlank() }.forEach { arr.put(it) }
+        prefs.edit().putString(KEY_SENSITIVE_PACKAGES, arr.toString()).apply()
+    }
+
+    fun isSensitivePackage(packageName: String?): Boolean =
+        perAppSensitive && packageName != null && packageName in sensitivePackages()
+
+    // ---- updates ----
+    var lastUpdateCheck: Long
+        get() = prefs.getLong(KEY_LAST_UPDATE_CHECK, 0L)
+        set(value) { prefs.edit().putLong(KEY_LAST_UPDATE_CHECK, value).apply() }
+
+    // ---- backup ----
 
     fun exportData(): JSONObject = JSONObject()
         .put("numberRow", showNumberRow)
         .put("keyPreview", keyPreview)
         .put("mascot", mascot)
+        .put("mascotPlacement", mascotPlacement.key)
+        .put("haptics", haptics)
+        .put("sound", sound)
+        .put("autoCapitalize", autoCapitalize)
+        .put("capitalizeFirstLetter", capitalizeFirstLetter)
+        .put("nextWordSuggestions", nextWordSuggestions)
+        .put("emojiPrediction", emojiPrediction)
+        .put("blockInappropriate", blockInappropriate)
+        .put("emojiTone", emojiTone)
+        .put("keyboardHeightPercent", keyboardHeightPercent)
+        .put("keyboardPadding", keyboardPadding)
+        .put("floatingKeyboard", floatingKeyboard)
         .put("clipboardEnabled", clipboardEnabled)
         .put("clipboardExpireHours", clipboardExpireHours)
+        .put("clipboardImages", clipboardImages)
+        .put("perAppSensitive", perAppSensitive)
+        .put("sensitivePackages", JSONArray(sensitivePackages().toList()))
 
     fun importData(json: JSONObject) {
         if (json.has("numberRow")) showNumberRow = json.getBoolean("numberRow")
         if (json.has("keyPreview")) keyPreview = json.getBoolean("keyPreview")
         if (json.has("mascot")) mascot = json.getBoolean("mascot")
+        if (json.has("mascotPlacement")) {
+            mascotPlacement = MascotPlacement.from(json.getString("mascotPlacement"))
+        }
+        if (json.has("haptics")) haptics = json.getBoolean("haptics")
+        if (json.has("sound")) sound = json.getBoolean("sound")
+        if (json.has("autoCapitalize")) autoCapitalize = json.getBoolean("autoCapitalize")
+        if (json.has("capitalizeFirstLetter")) {
+            capitalizeFirstLetter = json.getBoolean("capitalizeFirstLetter")
+        }
+        if (json.has("nextWordSuggestions")) {
+            nextWordSuggestions = json.getBoolean("nextWordSuggestions")
+        }
+        if (json.has("emojiPrediction")) emojiPrediction = json.getBoolean("emojiPrediction")
+        if (json.has("blockInappropriate")) {
+            blockInappropriate = json.getBoolean("blockInappropriate")
+        }
+        if (json.has("emojiTone")) emojiTone = json.getInt("emojiTone")
+        if (json.has("keyboardHeightPercent")) {
+            keyboardHeightPercent = json.getInt("keyboardHeightPercent")
+        }
+        if (json.has("keyboardPadding")) keyboardPadding = json.getInt("keyboardPadding")
+        if (json.has("floatingKeyboard")) floatingKeyboard = json.getBoolean("floatingKeyboard")
         if (json.has("clipboardEnabled")) clipboardEnabled = json.getBoolean("clipboardEnabled")
-        if (json.has("clipboardExpireHours")) clipboardExpireHours = json.getInt("clipboardExpireHours")
+        if (json.has("clipboardExpireHours")) {
+            clipboardExpireHours = json.getInt("clipboardExpireHours")
+        }
+        if (json.has("clipboardImages")) clipboardImages = json.getBoolean("clipboardImages")
+        if (json.has("perAppSensitive")) perAppSensitive = json.getBoolean("perAppSensitive")
+        if (json.has("sensitivePackages")) {
+            val arr = json.optJSONArray("sensitivePackages")
+            if (arr != null) {
+                val set = HashSet<String>()
+                for (i in 0 until arr.length()) set.add(arr.optString(i))
+                setSensitivePackages(set)
+            }
+        }
+    }
+
+    /**
+     * Version 1 was the first release. Version 2 adds the 0.4 settings.
+     * Every new value already has a sensible default in its getter, so this only
+     * records the version and fixes values that changed meaning.
+     */
+    private fun migrate() {
+        val version = prefs.getInt(KEY_VERSION, 0)
+        if (version >= PREFS_VERSION) return
+        val editor = prefs.edit()
+        if (version < 1) {
+            // First run of the old build: nothing to move, just start from defaults.
+            if (!prefs.contains(KEY_MASCOT)) editor.putBoolean(KEY_MASCOT, true)
+        }
+        if (version < 2) {
+            if (!prefs.contains(KEY_MASCOT_PLACEMENT)) {
+                editor.putString(KEY_MASCOT_PLACEMENT, MascotPlacement.ABOVE.key)
+            }
+            if (!prefs.contains(KEY_HAPTICS)) editor.putBoolean(KEY_HAPTICS, true)
+            if (!prefs.contains(KEY_CLIP_IMAGES)) editor.putBoolean(KEY_CLIP_IMAGES, true)
+            if (!prefs.contains(KEY_PER_APP_SENSITIVE)) {
+                editor.putBoolean(KEY_PER_APP_SENSITIVE, true)
+            }
+            if (!prefs.contains(KEY_AUTO_CAP)) editor.putBoolean(KEY_AUTO_CAP, true)
+            if (!prefs.contains(KEY_CAP_FIRST)) editor.putBoolean(KEY_CAP_FIRST, true)
+        }
+        editor.putInt(KEY_VERSION, PREFS_VERSION).apply()
     }
 
     private companion object {
+        const val PREFS_VERSION = 2
+        const val KEY_VERSION = "settings_version"
         const val KEY_NUMBER_ROW = "number_row"
         const val KEY_PREVIEW = "key_preview"
         const val KEY_MASCOT = "mascot"
+        const val KEY_MASCOT_PLACEMENT = "mascot_placement"
+        const val KEY_HAPTICS = "haptics"
+        const val KEY_SOUND = "sound"
+        const val KEY_AUTO_CAP = "auto_capitalize"
+        const val KEY_CAP_FIRST = "capitalize_first_letter"
+        const val KEY_NEXT_WORD = "next_word_suggestions"
+        const val KEY_EMOJI_PREDICTION = "emoji_prediction"
+        const val KEY_BLOCK_INAPPROPRIATE = "block_inappropriate"
+        const val KEY_EMOJI_TONE = "emoji_tone"
+        const val KEY_HEIGHT_PERCENT = "keyboard_height_percent"
+        const val KEY_BOTTOM_PADDING = "keyboard_bottom_padding"
+        const val KEY_FLOATING = "floating_keyboard"
+        const val KEY_FLOATING_X = "floating_x"
+        const val KEY_FLOATING_Y = "floating_y"
         const val KEY_CLIP_ENABLED = "clip_enabled"
         const val KEY_CLIP_PAUSED = "clip_paused"
         const val KEY_CLIP_EXPIRE = "clip_expire_hours"
+        const val KEY_CLIP_IMAGES = "clip_images"
+        const val KEY_PER_APP_SENSITIVE = "per_app_sensitive"
+        const val KEY_SENSITIVE_PACKAGES = "sensitive_packages"
+        const val KEY_LAST_UPDATE_CHECK = "last_update_check"
     }
 }

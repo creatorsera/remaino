@@ -13,6 +13,10 @@ data class KeyboardTheme(
     val onInverted: Int,
     val toolbarRadiusDp: Float,
     val keyRadiusDp: Float,
+    /** The single signal colour used for the caret, the mascot and the enter key. */
+    val accent: Int = 0xFFC8F26A.toInt(),
+    val onAccent: Int = 0xFF0A0A0B.toInt(),
+    val card: Int = 0xFF1C1C20.toInt(),
 ) {
     companion object {
         val Dark = KeyboardTheme(
@@ -27,6 +31,9 @@ data class KeyboardTheme(
             onInverted = 0xFF121214.toInt(),
             toolbarRadiusDp = 28f,
             keyRadiusDp = 14f,
+            accent = 0xFFC8F26A.toInt(),
+            onAccent = 0xFF0A0A0B.toInt(),
+            card = 0xFF1C1C20.toInt(),
         )
     }
 }

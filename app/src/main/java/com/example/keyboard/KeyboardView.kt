@@ -27,7 +27,8 @@ import kotlin.math.sin
 enum class ShiftState { OFF, ONE_SHOT, CAPS }
 
 enum class ToolbarAction {
-    MENU, CLOSE, MIC, EMOJI, CLIPBOARD, THEME, LANGUAGE, SETTINGS, BACK, CLIP_PAUSE, CLIP_CLEAR,
+    MENU, CLOSE, MIC, EMOJI, CLIPBOARD, THEME, LANGUAGE, SETTINGS, BACK, CLIP_PAUSE, CLIP_CLEAR, COPY_PASTE,
+    UNDO, REDO, STICKER, STICKER_STYLE, STICKER_SEND,
 }
 
 /**
@@ -42,13 +43,20 @@ class KeyboardView(context: Context) : View(context) {
         fun onSpace()
         fun onEnter()
         fun onSuggestion(word: String)
-        fun onGlobe()
         fun onEmoji(emoji: String)
         fun onPaste(text: String)
+        fun onGlobe()
+        fun onShift()
+        fun onDeleteWord()
         fun onToolbarAction(action: ToolbarAction)
+        fun onPasteImage(item: ClipItem)
+        fun onStickerSend(text: String, palette: Int): Boolean
+        fun onMascotState(visible: Boolean, deleting: Boolean) {}
     }
 
     private enum class Panel { KEYS, EMOJI, CLIPBOARD }
+
+    private enum class Capture { NONE, EMOJI_SEARCH, STICKER }
 
     private class Target(
         val rect: RectF,
@@ -56,6 +64,7 @@ class KeyboardView(context: Context) : View(context) {
         val action: ToolbarAction? = null,
         val suggestionIndex: Int = -1,
         val tabIndex: Int = -1,
+        val resultIndex: Int = -1,
     )
 
     private class SheetItem(
@@ -94,9 +103,36 @@ class KeyboardView(context: Context) : View(context) {
     private var showNumberRow = false
     private var previewEnabled = false
     private var mascotEnabled = true
+    private var placement = MascotPlacement.ABOVE
+    private var heightScale = 1f
+    private var extraBottomPad = 0
+    private var fieldEmpty = true
+    private var caretX = -1f
+    private var copiedChip: String? = null
+    private var copiedAt = 0L
+    private val prefs = KeyboardPrefs(context)
     private var suggestions: List<String> = emptyList()
     private var navInset = 0
     private var lastShiftTap = 0L
+
+    // Emoji search and sticker maker: letters typed go here instead of the app
+    private var captureMode = Capture.NONE
+    private val captureText = StringBuilder()
+    private var searchResults: List<String> = emptyList()
+    private var stickerPalette = 0
+
+    // Floating window and at-cursor mascot
+    var floating = false
+        private set
+    private var overlayMascot = false
+    var dragListener: ((Float, Float) -> Unit)? = null
+    var dragEndListener: (() -> Unit)? = null
+    private var gripPointer = -1
+    private var gripRawX = 0f
+    private var gripRawY = 0f
+    private var publishedVisible = false
+    private var publishedDeleting = false
+    private val thumbs = HashMap<Long, android.graphics.Bitmap>()
 
     // Mascot (pushes the cursor back while deleting)
     private var lastDeleteAt = 0L
@@ -121,7 +157,7 @@ class KeyboardView(context: Context) : View(context) {
     private var sectionStarts = FloatArray(0)
     private var sheetHeight = 0f
     private val tabIcons = intArrayOf(
-        R.drawable.ic_clock, R.drawable.ic_smile, R.drawable.ic_person, R.drawable.ic_paw,
+        R.drawable.ic_search, R.drawable.ic_clock, R.drawable.ic_smile, R.drawable.ic_person, R.drawable.ic_paw,
         R.drawable.ic_cup, R.drawable.ic_ball, R.drawable.ic_car, R.drawable.ic_bulb, R.drawable.ic_heart,
     )
 
@@ -136,6 +172,9 @@ class KeyboardView(context: Context) : View(context) {
 
     private val targets = ArrayList<Target>()
     private val pressedByPointer = HashMap<Int, Target>()
+    private var backspacePointer = -1
+    private var backspaceDownY = 0f
+    private var wordDeleteFired = false
     private val iconCache = HashMap<Int, Drawable>()
 
     private val uiHandler = Handler(Looper.getMainLooper())
@@ -148,6 +187,8 @@ class KeyboardView(context: Context) : View(context) {
     private val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
     private val path = Path()
     private val tmpRect = RectF()
+    private val tmpRectThumb = RectF()
+    private val imagePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val slopRect = RectF()
 
     private var longPressCandidate: Target? = null
@@ -156,7 +197,7 @@ class KeyboardView(context: Context) : View(context) {
         val tg = longPressCandidate
         if (tg != null && pressedByPointer.values.any { it === tg }) {
             longPressFired = tg
-            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            Feedback.longPress(this, prefs)
             handleAction(ToolbarAction.EMOJI)
         }
     }
@@ -190,15 +231,36 @@ class KeyboardView(context: Context) : View(context) {
         TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, v, resources.displayMetrics)
 
     private val toolbarH: Float get() = dp(48f)
-    private val rowH: Float get() = dp(46f)
+    private val rowH: Float get() = dp(46f * heightScale)
     private val rowGap: Float get() = dp(4f)
     private val sideMargin: Float get() = dp(1.5f)
     private val keyGap: Float get() = dp(2f)
     private val topPad: Float get() = dp(6f)
-    private val bottomPad: Float get() = max(dp(14f), navInset.toFloat())
+    private val bottomPad: Float
+        get() = if (floating) {
+            dp(10f) + dp(extraBottomPad.toFloat())
+        } else {
+            max(dp(14f) + dp(extraBottomPad.toFloat()), navInset.toFloat())
+        }
+
+    /** A transparent strip above the keyboard where the mascot can stand. */
+    private val mascotBandH: Float
+        get() = if (mascotEnabled && placement != MascotPlacement.TOOLBAR &&
+            !(placement == MascotPlacement.CURSOR && overlayMascot)
+        ) {
+            dp(34f)
+        } else {
+            0f
+        }
+
+    /** The grab bar at the top of the floating keyboard. */
+    private val handleH: Float get() = if (floating) dp(20f) else 0f
+
+    private fun topOffset(): Float = handleH + mascotBandH
+    private fun toolbarCenterY(): Float = topOffset() + toolbarH / 2f
 
     private fun rowCount(): Int = Layouts.rowCount(showNumberRow)
-    private fun keysTop(): Float = toolbarH + topPad
+    private fun keysTop(): Float = topOffset() + toolbarH + topPad
     private fun keysHeight(): Float = rowCount() * rowH + (rowCount() - 1) * rowGap
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -236,14 +298,65 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
-    fun applySettings(numberRow: Boolean, preview: Boolean, mascot: Boolean) {
-        previewEnabled = preview
-        mascotEnabled = mascot
-        if (numberRow != showNumberRow) {
-            showNumberRow = numberRow
+    fun applySettings(options: KeyboardPrefs) {
+        previewEnabled = options.keyPreview
+        mascotEnabled = options.mascot
+        placement = options.mascotPlacement
+        heightScale = options.keyboardHeightPercent / 100f
+        extraBottomPad = options.keyboardPadding
+        if (options.showNumberRow != showNumberRow) {
+            showNumberRow = options.showNumberRow
             requestLayout()
-            rebuildTargets()
         }
+        rebuildTargets()
+        invalidate()
+    }
+
+    /** True while the field has no text; the mascot idles and waves. */
+    fun setFieldEmpty(value: Boolean) {
+        if (fieldEmpty == value) return
+        fieldEmpty = value
+        lastDeleteAt = if (value) lastDeleteAt else 0L
+        invalidate()
+    }
+
+    /** Caret position from CursorAnchorInfo, used to line the mascot up above the keys. */
+    fun setCaretX(x: Float) {
+        caretX = x
+        invalidate()
+    }
+
+    /** Floating mode draws the keyboard as a rounded card with a grab bar. */
+    fun setFloating(on: Boolean) {
+        if (floating == on) return
+        floating = on
+        requestLayout()
+        rebuildTargets()
+        invalidate()
+    }
+
+    /** True when the mascot is drawn by the at-cursor overlay window instead of the band. */
+    fun setOverlayMascot(on: Boolean) {
+        if (overlayMascot == on) return
+        overlayMascot = on
+        requestLayout()
+        rebuildTargets()
+        invalidate()
+    }
+
+    /** Shows the copied-text pill in the toolbar for a few seconds. */
+    fun showCopiedChip(text: String) {
+        copiedChip = text.replace('\n', ' ').take(140)
+        copiedAt = SystemClock.uptimeMillis()
+        rebuildTargets()
+        invalidate()
+        uiHandler.removeCallbacks(clearChipRunnable)
+        uiHandler.postDelayed(clearChipRunnable, 6000L)
+    }
+
+    private val clearChipRunnable = Runnable {
+        copiedChip = null
+        rebuildTargets()
         invalidate()
     }
 
@@ -270,7 +383,7 @@ class KeyboardView(context: Context) : View(context) {
         targets.clear()
         val w = width.toFloat()
         if (w <= 0f) return
-        val cy = toolbarH / 2f
+        val cy = toolbarCenterY()
         val leftCx = dp(28f)
         val leftRect = RectF(leftCx - dp(22f), cy - dp(22f), leftCx + dp(22f), cy + dp(22f))
 
@@ -295,11 +408,43 @@ class KeyboardView(context: Context) : View(context) {
             return
         }
 
+        if (captureMode != Capture.NONE) {
+            targets.add(Target(leftRect, action = ToolbarAction.BACK))
+            if (captureMode == Capture.STICKER) {
+                val styleCx = w - dp(68f)
+                val sendCx = w - dp(28f)
+                targets.add(
+                    Target(
+                        RectF(styleCx - dp(22f), cy - dp(22f), styleCx + dp(22f), cy + dp(22f)),
+                        action = ToolbarAction.STICKER_STYLE,
+                    ),
+                )
+                targets.add(
+                    Target(
+                        RectF(sendCx - dp(22f), cy - dp(22f), sendCx + dp(22f), cy + dp(22f)),
+                        action = ToolbarAction.STICKER_SEND,
+                    ),
+                )
+            } else {
+                val first = dp(56f) + dp(112f) + dp(6f)
+                val count = max(0, ((w - dp(8f) - first) / dp(40f)).toInt())
+                for (i in 0 until count) {
+                    val l = first + i * dp(40f)
+                    targets.add(Target(RectF(l, cy - dp(20f), l + dp(40f), cy + dp(20f)), resultIndex = i))
+                }
+            }
+            buildKeyTargets(w)
+            return
+        }
+
         targets.add(Target(leftRect, action = if (trayOpen) ToolbarAction.CLOSE else ToolbarAction.MENU))
 
         if (trayOpen) {
             val actions = listOf(
+                ToolbarAction.UNDO,
+                ToolbarAction.REDO,
                 ToolbarAction.EMOJI,
+                ToolbarAction.STICKER,
                 ToolbarAction.CLIPBOARD,
                 ToolbarAction.MIC,
                 ToolbarAction.THEME,
@@ -311,7 +456,7 @@ class KeyboardView(context: Context) : View(context) {
             val step = (endX - startX) / actions.size
             actions.forEachIndexed { i, a ->
                 val cx = startX + step * (i + 0.5f)
-                targets.add(Target(RectF(cx - step / 2f, 0f, cx + step / 2f, toolbarH), action = a))
+                targets.add(Target(RectF(cx - step / 2f, topOffset(), cx + step / 2f, topOffset() + toolbarH), action = a))
             }
         } else {
             val micCx = w - dp(28f)
@@ -323,11 +468,20 @@ class KeyboardView(context: Context) : View(context) {
             )
             val regionL = dp(56f)
             val regionR = w - dp(56f)
-            val gap = dp(6f)
-            val chipW = (regionR - regionL - 2 * gap) / 3f
-            for (i in 0 until 3) {
-                val l = regionL + i * (chipW + gap)
-                targets.add(Target(RectF(l, cy - dp(16f), l + chipW, cy + dp(16f)), suggestionIndex = i))
+            if (copiedChip != null) {
+                targets.add(
+                    Target(
+                        RectF(regionL, cy - dp(18f), regionR, cy + dp(18f)),
+                        action = ToolbarAction.COPY_PASTE,
+                    ),
+                )
+            } else {
+                val gap = dp(6f)
+                val chipW = (regionR - regionL - 2 * gap) / 3f
+                for (i in 0 until 3) {
+                    val l = regionL + i * (chipW + gap)
+                    targets.add(Target(RectF(l, cy - dp(16f), l + chipW, cy + dp(16f)), suggestionIndex = i))
+                }
             }
         }
 
@@ -357,7 +511,7 @@ class KeyboardView(context: Context) : View(context) {
         val right = w - sideMargin
         val top = keysTop()
         val tabsH = dp(38f)
-        val tabs = EmojiData.categories.size + 1
+        val tabs = EmojiData.categories.size + 2
         val tabW = (right - left) / tabs
         for (i in 0 until tabs) {
             targets.add(Target(RectF(left + i * tabW, top, left + (i + 1) * tabW, top + tabsH), tabIndex = i))
@@ -440,7 +594,7 @@ class KeyboardView(context: Context) : View(context) {
         val col = ((x - contentRect.left) / cell).toInt()
         if (col < 0 || col >= list.size) return
         val emoji = list[col]
-        performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        Feedback.tap(this, prefs)
         recentsStore.add(emoji)
         listener?.onEmoji(emoji)
     }
@@ -459,7 +613,8 @@ class KeyboardView(context: Context) : View(context) {
         val items = clipStore.items()
         val rows = ArrayList<ClipRow>()
         val headerH = dp(26f)
-        val itemH = dp(44f)
+        val itemH = dp(76f)
+        val gapH = dp(8f)
         val hintH = dp(70f)
         var y = 0f
         if (items.isEmpty()) {
@@ -474,7 +629,7 @@ class KeyboardView(context: Context) : View(context) {
                 y += headerH
                 for (item in pinned) {
                     rows.add(ClipRow(y, itemH, item = item))
-                    y += itemH
+                    y += itemH + gapH
                 }
             }
             if (recent.isNotEmpty()) {
@@ -482,7 +637,7 @@ class KeyboardView(context: Context) : View(context) {
                 y += headerH
                 for (item in recent) {
                     rows.add(ClipRow(y, itemH, item = item))
-                    y += itemH
+                    y += itemH + gapH
                 }
             }
         }
@@ -490,22 +645,49 @@ class KeyboardView(context: Context) : View(context) {
         clipHeight = y
     }
 
-    private fun tapClip(x: Float, y: Float) {
-        if (!contentRect.contains(x, y)) return
+    /** "just now", "12m ago", "3h ago", "2d ago". */
+    private fun relativeTime(time: Long): String {
+        val diff = max(0L, System.currentTimeMillis() - time)
+        return when {
+            diff < 60_000L -> "just now"
+            diff < 3_600_000L -> "${diff / 60_000L}m ago"
+            diff < 86_400_000L -> "${diff / 3_600_000L}h ago"
+            else -> "${diff / 86_400_000L}d ago"
+        }
+    }
+
+    private fun thumbnailFor(item: ClipItem): android.graphics.Bitmap? {
+        thumbs[item.time]?.let { return it }
+        val bmp = try {
+            val bytes = android.util.Base64.decode(item.image, android.util.Base64.NO_WRAP)
+            val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = 4 }
+            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+        } catch (e: Exception) {
+            null
+        }
+        if (bmp != null) {
+            if (thumbs.size > 24) thumbs.clear()
+            thumbs[item.time] = bmp
+        }
+        return bmp
+    }
+
+    private fun tapClip(x: Float, y: Float) {        if (!contentRect.contains(x, y)) return
         val local = y - contentRect.top + scrollY
         val row = clipRows.firstOrNull { local >= it.y && local < it.y + it.height } ?: return
         val item = row.item ?: return
-        performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        Feedback.tap(this, prefs)
         when {
             x > contentRect.right - dp(44f) -> {
-                clipStore.remove(item.text)
+                clipStore.remove(item)
                 reloadClipboard()
             }
             x > contentRect.right - dp(88f) -> {
-                clipStore.togglePin(item.text)
+                clipStore.togglePin(item)
                 reloadClipboard()
             }
-            else -> listener?.onPaste(item.text)
+            item.image == null -> listener?.onPaste(item.text)
+            else -> listener?.onPasteImage(item)
         }
         invalidate()
     }
@@ -513,8 +695,28 @@ class KeyboardView(context: Context) : View(context) {
     // ---------- mascot ----------
 
     private fun fireBackspace() {
+        if (captureMode != Capture.NONE) {
+            if (captureText.isNotEmpty()) captureText.setLength(captureText.length - 1)
+            onCaptureChanged()
+            return
+        }
         listener?.onBackspace()
         noteDelete()
+    }
+
+    private val mascotStateRunnable = Runnable {
+        publishMascotState()
+        invalidate()
+    }
+
+    /** Tells the service when the mascot should appear, so the at-cursor overlay can follow. */
+    private fun publishMascotState() {
+        val visible = mascotVisible()
+        val deleting = deletingRecently()
+        if (visible == publishedVisible && deleting == publishedDeleting) return
+        publishedVisible = visible
+        publishedDeleting = deleting
+        listener?.onMascotState(visible, deleting)
     }
 
     private fun noteDelete() {
@@ -529,17 +731,29 @@ class KeyboardView(context: Context) : View(context) {
             mascotTarget = 0f
             mascotProgress = 0f
         }
+        uiHandler.removeCallbacks(mascotStateRunnable)
+        uiHandler.postDelayed(mascotStateRunnable, 950L)
         postInvalidateOnAnimation()
     }
 
+    private fun deletingRecently(): Boolean =
+        SystemClock.uptimeMillis() - lastDeleteAt < 900L
+
+    /**
+     * The mascot only comes out when the field is empty (idle, waving) or while
+     * the user is deleting. It stays hidden during normal typing.
+     */
+    private fun mascotVisible(): Boolean =
+        mascotEnabled && !trayOpen && panel == Panel.KEYS && captureMode == Capture.NONE &&
+            (fieldEmpty || deletingRecently())
+
     private fun laneVisible(): Boolean =
-        mascotEnabled && !trayOpen && panel != Panel.CLIPBOARD &&
-            SystemClock.uptimeMillis() - lastDeleteAt < 900L
+        mascotVisible() && placement == MascotPlacement.TOOLBAR
 
     private fun drawMascotLane(canvas: Canvas, t: KeyboardTheme) {
         val left = dp(56f)
         val right = width - dp(56f)
-        val cy = toolbarH / 2f
+        val cy = toolbarCenterY()
         tmpRect.set(left, cy - dp(16f), right, cy + dp(16f))
         fill.color = t.key
         canvas.drawRoundRect(tmpRect, dp(16f), dp(16f), fill)
@@ -560,7 +774,12 @@ class KeyboardView(context: Context) : View(context) {
 
         // The mascot, pushing it with one arm
         val bx = caretX + dp(21f)
-        val bob = if (moving) sin(now / 60.0).toFloat() * dp(1.5f) else 0f
+        val idle = !moving && fieldEmpty
+        val bob = when {
+            moving -> sin(now / 60.0).toFloat() * dp(1.5f)
+            idle -> sin(now / 420.0).toFloat() * dp(1.2f)
+            else -> 0f
+        }
         val by = cy + bob
         strokePaint.color = t.inverted
         strokePaint.strokeWidth = dp(2.5f)
@@ -582,13 +801,78 @@ class KeyboardView(context: Context) : View(context) {
         canvas.drawArc(tmpRect, 20f, 140f, false, strokePaint)
     }
 
+    // ---------- emoji search and sticker maker ----------
+
+    private fun startCapture(mode: Capture) {
+        captureMode = mode
+        captureText.setLength(0)
+        searchResults = emptyList()
+        panel = Panel.KEYS
+        rebuildTargets()
+        invalidate()
+    }
+
+    private fun exitCapture() {
+        captureMode = Capture.NONE
+        captureText.setLength(0)
+        searchResults = emptyList()
+        rebuildTargets()
+        invalidate()
+    }
+
+    private fun onCaptureChanged() {
+        if (captureMode == Capture.EMOJI_SEARCH) {
+            searchResults = EmojiData.search(captureText.toString()).filter { glyphPaint.hasGlyph(it) }
+        }
+        invalidate()
+    }
+
+    private fun captureAppend(text: String) {
+        captureText.append(text)
+        onCaptureChanged()
+    }
+
+    private fun sendSticker() {
+        val text = captureText.toString().trim()
+        if (text.isEmpty()) return
+        if (listener?.onStickerSend(text, stickerPalette) == true) exitCapture()
+    }
+
+    private fun drawCapturePill(canvas: Canvas, t: KeyboardTheme, w: Float) {
+        val cy = toolbarCenterY()
+        val left = dp(56f)
+        val right = if (captureMode == Capture.STICKER) w - dp(100f) else left + dp(112f)
+        tmpRect.set(left, cy - dp(16f), right, cy + dp(16f))
+        fill.color = t.key
+        canvas.drawRoundRect(tmpRect, dp(16f), dp(16f), fill)
+        val empty = captureText.isEmpty()
+        val hint = if (captureMode == Capture.STICKER) "Type sticker text" else "Search emoji"
+        textPaint.textSize = sp(14f)
+        textPaint.color = if (empty) t.textDim else t.text
+        textPaint.textAlign = Paint.Align.LEFT
+        val shown = TextUtils.ellipsize(
+            if (empty) hint else captureText.toString(), textPaint, tmpRect.width() - dp(24f), TextUtils.TruncateAt.START,
+        )
+        val y = cy - (textPaint.descent() + textPaint.ascent()) / 2f
+        canvas.drawText(shown, 0, shown.length, left + dp(12f), y, textPaint)
+        textPaint.textAlign = Paint.Align.CENTER
+    }
+
+    private fun drawResult(canvas: Canvas, tg: Target, t: KeyboardTheme) {
+        val e = searchResults.getOrNull(tg.resultIndex) ?: return
+        textPaint.textSize = sp(24f)
+        textPaint.color = t.text
+        val y = tg.rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f
+        canvas.drawText(e, tg.rect.centerX(), y, textPaint)
+    }
+
     // ---------- hit testing ----------
 
     private fun hit(x: Float, y: Float): Target? {
         for (tg in targets) {
             if (tg.rect.contains(x, y)) return tg
         }
-        if (y >= toolbarH) {
+        if (y >= topOffset() + toolbarH) {
             var best: Target? = null
             var bestD = Float.MAX_VALUE
             for (tg in targets) {
@@ -621,20 +905,38 @@ class KeyboardView(context: Context) : View(context) {
         val r = dp(t.toolbarRadiusDp)
         val lane = laneVisible()
 
-        drawTopRounded(canvas, h, w, r, t.base)
-        drawTopRounded(canvas, toolbarH, w, r, t.toolbar)
+        publishMascotState()
+        if (floating) {
+            tmpRect.set(0f, 0f, w, h)
+            fill.color = t.base
+            canvas.drawRoundRect(tmpRect, r, r, fill)
+            fill.color = t.toolbar
+            tmpRect.set(dp(4f), handleH + mascotBandH, w - dp(4f), handleH + mascotBandH + toolbarH)
+            canvas.drawRoundRect(tmpRect, dp(20f), dp(20f), fill)
+            fill.color = t.textDim
+            tmpRect.set(w / 2f - dp(22f), dp(7f), w / 2f + dp(22f), dp(11f))
+            canvas.drawRoundRect(tmpRect, dp(2f), dp(2f), fill)
+        } else {
+            drawTopRounded(canvas, h, w, r, t.base, topOffset())
+            drawTopRounded(canvas, topOffset() + toolbarH, w, r, t.toolbar, topOffset())
+        }
 
         if (panel == Panel.CLIPBOARD) {
-            drawLeftLabel(canvas, "Clipboard", dp(56f), toolbarH / 2f, sp(16f), t.text)
-        } else if (sensitive && !trayOpen) {
-            drawLabel(canvas, "Private field", w / 2f, toolbarH / 2f, sp(14f), t.textDim)
+            drawLeftLabel(canvas, "Clipboard", dp(56f), toolbarCenterY(), sp(16f), t.text)
+        } else if (sensitive && !trayOpen && captureMode == Capture.NONE) {
+            drawLabel(canvas, "Private field", w / 2f, toolbarCenterY(), sp(14f), t.textDim)
         }
+
+        if (captureMode != Capture.NONE) drawCapturePill(canvas, t, w)
+
+        if (copiedChip != null && !trayOpen && captureMode == Capture.NONE) drawCopiedChip(canvas, t, w)
 
         for (tg in targets) {
             val key = tg.key
             val action = tg.action
             when {
                 tg.suggestionIndex >= 0 -> if (!lane) drawChip(canvas, tg, t)
+                tg.resultIndex >= 0 -> drawResult(canvas, tg, t)
                 tg.tabIndex >= 0 -> drawTab(canvas, tg, t)
                 action != null -> drawToolbarButton(canvas, tg, action, t)
                 key != null -> drawKey(canvas, tg, key, t)
@@ -650,20 +952,105 @@ class KeyboardView(context: Context) : View(context) {
         if (lane) {
             drawMascotLane(canvas, t)
             postInvalidateOnAnimation()
+        } else if (mascotEnabled && placement != MascotPlacement.TOOLBAR && mascotVisible()) {
+            drawBandMascot(canvas, t)
+            postInvalidateOnAnimation()
         }
     }
 
-    private fun drawTopRounded(canvas: Canvas, bottom: Float, w: Float, r: Float, color: Int) {
+    private fun drawTopRounded(canvas: Canvas, bottom: Float, w: Float, r: Float, color: Int, top: Float = 0f) {
+        if (bottom <= top) return
         fill.color = color
         path.reset()
-        tmpRect.set(0f, 0f, w, bottom)
-        path.addRoundRect(tmpRect, floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f), Path.Direction.CW)
+        tmpRect.set(0f, top, w, bottom)
+        val radii = if (top > 0f) {
+            floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
+        } else {
+            floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
+        }
+        path.addRoundRect(tmpRect, radii, Path.Direction.CW)
         canvas.drawPath(path, fill)
+    }
+
+    /** The copied-text pill that briefly replaces the suggestion row. */
+    private fun drawCopiedChip(canvas: Canvas, t: KeyboardTheme, w: Float) {
+        val cy = toolbarCenterY()
+        val left = dp(56f)
+        val right = w - dp(56f)
+        tmpRect.set(left, cy - dp(18f), right, cy + dp(18f))
+        fill.color = t.card
+        canvas.drawRoundRect(tmpRect, dp(18f), dp(18f), fill)
+        strokePaint.color = ColorUtils.setAlphaComponent(t.accent, 90)
+        strokePaint.strokeWidth = dp(1f)
+        canvas.drawRoundRect(tmpRect, dp(18f), dp(18f), strokePaint)
+
+        drawIcon(canvas, R.drawable.ic_clipboard, left + dp(20f), cy, dp(18f), t.accent)
+        textPaint.textAlign = Paint.Align.LEFT
+        textPaint.textSize = sp(8f)
+        textPaint.color = t.accent
+        val labelY = cy - dp(1f)
+        canvas.drawText("COPIED", left + dp(36f), labelY, textPaint)
+        textPaint.textSize = sp(12f)
+        textPaint.color = t.text
+        val maxW = right - left - dp(110f)
+        val snippet = TextUtils.ellipsize(
+            copiedChip ?: "", textPaint, maxW, TextUtils.TruncateAt.END,
+        )
+        canvas.drawText(snippet, 0, snippet.length, left + dp(36f), cy + dp(12f), textPaint)
+
+        textPaint.textAlign = Paint.Align.CENTER
+        textPaint.color = t.onAccent
+        textPaint.textSize = sp(11f)
+        tmpRect.set(right - dp(62f), cy - dp(13f), right - dp(8f), cy + dp(13f))
+        fill.color = t.accent
+        canvas.drawRoundRect(tmpRect, dp(13f), dp(13f), fill)
+        canvas.drawText("Paste", tmpRect.centerX(), cy + dp(3.5f), textPaint)
+        textPaint.textAlign = Paint.Align.CENTER
+    }
+
+    private fun drawBandMascot(canvas: Canvas, t: KeyboardTheme) {
+        val now = SystemClock.uptimeMillis()
+        val cx = if (caretX > 0f) caretX.coerceIn(dp(26f), width - dp(26f)) else width / 2f
+        val idle = fieldEmpty && !deletingRecently()
+        val bob = if (idle) sin(now / 420.0).toFloat() * dp(1.2f) else 0f
+        val scale = if (deletingRecently()) 1.15f else 1f
+        drawMascot(canvas, cx, handleH + mascotBandH / 2f + bob, scale, t)
+    }
+
+    private fun drawMascot(canvas: Canvas, cx: Float, cy: Float, scale: Float, t: KeyboardTheme) {
+        val r = dp(9f) * scale
+        fill.color = t.accent
+        canvas.drawCircle(cx, cy, r, fill)
+        fill.color = t.onAccent
+        canvas.drawCircle(cx - r * 0.34f, cy - r * 0.15f, dp(1.5f) * scale, fill)
+        canvas.drawCircle(cx + r * 0.34f, cy - r * 0.15f, dp(1.5f) * scale, fill)
+        strokePaint.color = t.onAccent
+        strokePaint.strokeWidth = dp(1.2f) * scale
+        tmpRect.set(cx - r * 0.34f, cy + r * 0.05f, cx + r * 0.34f, cy + r * 0.5f)
+        canvas.drawArc(tmpRect, 20f, 140f, false, strokePaint)
+        // small caret the mascot is pushing
+        fill.color = t.accent
+        tmpRect.set(cx + r + dp(4f), cy - dp(8f), cx + r + dp(6f), cy + dp(8f))
+        canvas.drawRoundRect(tmpRect, dp(1f), dp(1f), fill)
     }
 
     private fun drawToolbarButton(canvas: Canvas, tg: Target, action: ToolbarAction, t: KeyboardTheme) {
         val cx = tg.rect.centerX()
         val cy = tg.rect.centerY()
+        if (action == ToolbarAction.STICKER_STYLE) {
+            fill.color = StickerMaker.palettes[stickerPalette].first
+            canvas.drawCircle(cx, cy, dp(13f), fill)
+            strokePaint.color = t.icon
+            strokePaint.strokeWidth = dp(1.5f)
+            canvas.drawCircle(cx, cy, dp(16f), strokePaint)
+            return
+        }
+        if (action == ToolbarAction.STICKER_SEND) {
+            fill.color = t.accent
+            canvas.drawCircle(cx, cy, dp(16f), fill)
+            drawIcon(canvas, R.drawable.ic_send, cx, cy, dp(22f), t.onAccent)
+            return
+        }
         val circular = action == ToolbarAction.MENU ||
             action == ToolbarAction.CLOSE ||
             action == ToolbarAction.BACK ||
@@ -687,6 +1074,12 @@ class KeyboardView(context: Context) : View(context) {
             ToolbarAction.BACK -> R.drawable.ic_back
             ToolbarAction.CLIP_PAUSE -> if (clipStore.paused) R.drawable.ic_play else R.drawable.ic_pause
             ToolbarAction.CLIP_CLEAR -> R.drawable.ic_trash
+            ToolbarAction.UNDO -> R.drawable.ic_undo
+            ToolbarAction.REDO -> R.drawable.ic_redo
+            ToolbarAction.COPY_PASTE -> R.drawable.ic_clipboard
+            ToolbarAction.STICKER -> R.drawable.ic_sticker
+            ToolbarAction.STICKER_STYLE -> R.drawable.ic_theme
+            ToolbarAction.STICKER_SEND -> R.drawable.ic_send
         }
         drawIcon(canvas, res, cx, cy, dp(24f), t.icon)
     }
@@ -707,7 +1100,7 @@ class KeyboardView(context: Context) : View(context) {
 
     private fun drawTab(canvas: Canvas, tg: Target, t: KeyboardTheme) {
         val r = tg.rect
-        val selected = tg.tabIndex == currentSection()
+        val selected = tg.tabIndex >= 1 && tg.tabIndex - 1 == currentSection()
         if (selected || isPressed(tg)) {
             val inset = dp(2f)
             tmpRect.set(r.left + inset, r.top + inset, r.right - inset, r.bottom - inset)
@@ -762,24 +1155,47 @@ class KeyboardView(context: Context) : View(context) {
             if (header != null) {
                 drawLeftLabel(canvas, header, contentRect.left + dp(6f), top + row.height / 2f, sp(12f), t.textDim)
             } else if (item != null) {
-                tmpRect.set(contentRect.left, top + dp(2f), contentRect.right, top + row.height - dp(2f))
-                fill.color = t.key
-                canvas.drawRoundRect(tmpRect, dp(14f), dp(14f), fill)
-                textPaint.textSize = sp(14f)
+                tmpRect.set(contentRect.left, top, contentRect.right, top + row.height - dp(8f))
+                fill.color = t.card
+                canvas.drawRoundRect(tmpRect, dp(18f), dp(18f), fill)
+                var textLeft = tmpRect.left + dp(14f)
+                if (item.image != null) {
+                    val thumb = thumbnailFor(item)
+                    if (thumb != null) {
+                        val side = dp(38f)
+                        tmpRectThumb.set(
+                            tmpRect.left + dp(12f), tmpRect.centerY() - side / 2f,
+                            tmpRect.left + dp(12f) + side, tmpRect.centerY() + side / 2f,
+                        )
+                        canvas.save()
+                        path.reset()
+                        path.addRoundRect(tmpRectThumb, dp(10f), dp(10f), Path.Direction.CW)
+                        canvas.clipPath(path)
+                        canvas.drawBitmap(thumb, null, tmpRectThumb, imagePaint)
+                        canvas.restore()
+                        textLeft = tmpRectThumb.right + dp(12f)
+                    }
+                }
+                textPaint.textSize = sp(13.5f)
                 textPaint.color = t.text
                 textPaint.textAlign = Paint.Align.LEFT
-                val maxW = tmpRect.width() - dp(14f) - dp(88f)
-                val shown = TextUtils.ellipsize(item.text.replace('\n', ' '), textPaint, maxW, TextUtils.TruncateAt.END)
-                val y = tmpRect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f
-                canvas.drawText(shown, 0, shown.length, tmpRect.left + dp(14f), y, textPaint)
+                val maxW = tmpRect.right - dp(96f) - textLeft
+                val visible = if (item.image != null) "Image" else item.text.replace('\n', ' ')
+                val shown = TextUtils.ellipsize(visible, textPaint, maxW, TextUtils.TruncateAt.END)
+                canvas.drawText(shown, 0, shown.length, textLeft, tmpRect.top + dp(28f), textPaint)
+                textPaint.textSize = sp(10f)
+                textPaint.color = t.textDim
+                canvas.drawText(
+                    relativeTime(item.time), textLeft, tmpRect.top + dp(50f), textPaint,
+                )
                 textPaint.textAlign = Paint.Align.CENTER
-                val pinColor = if (item.pinned) t.inverted else t.textDim
+                val pinColor = if (item.pinned) t.accent else t.textDim
                 drawIcon(
                     canvas,
                     if (item.pinned) R.drawable.ic_pin_filled else R.drawable.ic_pin,
                     tmpRect.right - dp(66f), tmpRect.centerY(), dp(20f), pinColor,
                 )
-                drawIcon(canvas, R.drawable.ic_close, tmpRect.right - dp(22f), tmpRect.centerY(), dp(18f), t.textDim)
+                drawIcon(canvas, R.drawable.ic_close, tmpRect.right - dp(24f), tmpRect.centerY(), dp(18f), t.textDim)
             } else if (hint != null) {
                 drawLabel(canvas, hint, contentRect.centerX(), top + row.height / 2f, sp(14f), t.textDim)
             }
@@ -795,9 +1211,9 @@ class KeyboardView(context: Context) : View(context) {
 
         if (key.type == KeyType.ENTER) {
             // Inverted round bubble (pill)
-            fill.color = if (pressed) ColorUtils.blendARGB(t.inverted, Color.GRAY, 0.25f) else t.inverted
+            fill.color = if (pressed) ColorUtils.blendARGB(t.accent, Color.GRAY, 0.25f) else t.accent
             canvas.drawRoundRect(r, r.height() / 2f, r.height() / 2f, fill)
-            drawIcon(canvas, R.drawable.ic_enter, cx, cy, dp(26f), t.onInverted)
+            drawIcon(canvas, R.drawable.ic_enter, cx, cy, dp(26f), t.onAccent)
             return
         }
 
@@ -883,6 +1299,12 @@ class KeyboardView(context: Context) : View(context) {
                 val i = event.actionIndex
                 val x = event.getX(i)
                 val y = event.getY(i)
+                if (floating && gripPointer == -1 && i == 0 && y < handleH + dp(6f)) {
+                    gripPointer = event.getPointerId(i)
+                    gripRawX = event.rawX
+                    gripRawY = event.rawY
+                    return true
+                }
                 val scrollPanel = panel == Panel.EMOJI || panel == Panel.CLIPBOARD
                 if (scrollPanel && gridPointer == -1 && contentRect.contains(x, y)) {
                     gridPointer = event.getPointerId(i)
@@ -894,9 +1316,12 @@ class KeyboardView(context: Context) : View(context) {
                 val tg = hit(x, y)
                 if (tg != null) {
                     pressedByPointer[event.getPointerId(i)] = tg
-                    performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    Feedback.tap(this, prefs)
                     val type = tg.key?.type
                     if (type == KeyType.BACKSPACE) {
+                        backspacePointer = event.getPointerId(i)
+                        backspaceDownY = y
+                        wordDeleteFired = false
                         fireBackspace()
                         uiHandler.postDelayed(repeatRunnable, 380L)
                     } else if (type == KeyType.COMMA_EMOJI) {
@@ -908,6 +1333,23 @@ class KeyboardView(context: Context) : View(context) {
                 }
             }
             MotionEvent.ACTION_MOVE -> {
+                if (gripPointer != -1) {
+                    val dx = event.rawX - gripRawX
+                    val dy = event.rawY - gripRawY
+                    gripRawX = event.rawX
+                    gripRawY = event.rawY
+                    dragListener?.invoke(dx, dy)
+                    return true
+                }
+                if (backspacePointer != -1 && !wordDeleteFired) {
+                    val idx = event.findPointerIndex(backspacePointer)
+                    if (idx >= 0 && backspaceDownY - event.getY(idx) > dp(26f)) {
+                        wordDeleteFired = true
+                        uiHandler.removeCallbacks(repeatRunnable)
+                        listener?.onDeleteWord()
+                        Feedback.tap(this, prefs)
+                    }
+                }
                 if (gridPointer != -1) {
                     val idx = event.findPointerIndex(gridPointer)
                     if (idx >= 0) {
@@ -924,6 +1366,11 @@ class KeyboardView(context: Context) : View(context) {
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
                 val i = event.actionIndex
                 val id = event.getPointerId(i)
+                if (id == gripPointer) {
+                    gripPointer = -1
+                    dragEndListener?.invoke()
+                    return true
+                }
                 if (id == gridPointer) {
                     if (!gridMoved) {
                         if (panel == Panel.EMOJI) {
@@ -941,6 +1388,8 @@ class KeyboardView(context: Context) : View(context) {
                     val type = down.key?.type
                     if (type == KeyType.BACKSPACE) {
                         uiHandler.removeCallbacks(repeatRunnable)
+                        backspacePointer = -1
+                        wordDeleteFired = false
                     } else if (down === longPressFired) {
                         longPressFired = null
                     } else {
@@ -956,6 +1405,12 @@ class KeyboardView(context: Context) : View(context) {
             MotionEvent.ACTION_CANCEL -> {
                 pressedByPointer.clear()
                 gridPointer = -1
+                if (gripPointer != -1) {
+                    gripPointer = -1
+                    dragEndListener?.invoke()
+                }
+                backspacePointer = -1
+                wordDeleteFired = false
                 uiHandler.removeCallbacks(repeatRunnable)
                 uiHandler.removeCallbacks(longPressRunnable)
                 invalidate()
@@ -972,9 +1427,21 @@ class KeyboardView(context: Context) : View(context) {
             if (word != null) l.onSuggestion(word)
             return
         }
+        if (tg.resultIndex >= 0) {
+            val emoji = searchResults.getOrNull(tg.resultIndex)
+            if (emoji != null) {
+                recentsStore.add(emoji)
+                l.onEmoji(emoji)
+            }
+            return
+        }
         if (tg.tabIndex >= 0) {
+            if (tg.tabIndex == 0) {
+                startCapture(Capture.EMOJI_SEARCH)
+                return
+            }
             val maxScroll = max(0f, sheetHeight - contentRect.height())
-            scrollY = sectionStarts.getOrElse(tg.tabIndex) { 0f }.coerceAtMost(maxScroll)
+            scrollY = sectionStarts.getOrElse(tg.tabIndex - 1) { 0f }.coerceAtMost(maxScroll)
             invalidate()
             return
         }
@@ -986,16 +1453,23 @@ class KeyboardView(context: Context) : View(context) {
         val key = tg.key ?: return
         when (key.type) {
             KeyType.CHAR -> {
-                l.onText(labelFor(key))
+                if (captureMode != Capture.NONE) captureAppend(labelFor(key)) else l.onText(labelFor(key))
                 if (shiftState == ShiftState.ONE_SHOT) setShift(ShiftState.OFF)
             }
-            KeyType.SHIFT -> toggleShift()
+            KeyType.SHIFT -> {
+                val l = listener
+                if (l != null) l.onShift() else toggleShift()
+            }
             KeyType.SYMBOLS -> setSymbols(true)
             KeyType.LETTERS -> setSymbols(false)
             KeyType.GLOBE -> l.onGlobe()
-            KeyType.COMMA_EMOJI -> l.onText(",")
-            KeyType.SPACE -> l.onSpace()
-            KeyType.ENTER -> l.onEnter()
+            KeyType.COMMA_EMOJI -> if (captureMode != Capture.NONE) captureAppend(",") else l.onText(",")
+            KeyType.SPACE -> if (captureMode != Capture.NONE) captureAppend(" ") else l.onSpace()
+            KeyType.ENTER -> when (captureMode) {
+                Capture.NONE -> l.onEnter()
+                Capture.STICKER -> sendSticker()
+                Capture.EMOJI_SEARCH -> Unit
+            }
             KeyType.BACKSPACE, KeyType.SPACER -> Unit
         }
     }
@@ -1011,11 +1485,21 @@ class KeyboardView(context: Context) : View(context) {
             ToolbarAction.EMOJI -> openEmoji()
             ToolbarAction.CLIPBOARD -> openClipboard()
             ToolbarAction.BACK -> {
-                panel = Panel.KEYS
-                scrollY = 0f
-                rebuildTargets()
+                if (captureMode != Capture.NONE) {
+                    exitCapture()
+                } else {
+                    panel = Panel.KEYS
+                    scrollY = 0f
+                    rebuildTargets()
+                    invalidate()
+                }
+            }
+            ToolbarAction.STICKER -> startCapture(Capture.STICKER)
+            ToolbarAction.STICKER_STYLE -> {
+                stickerPalette = (stickerPalette + 1) % StickerMaker.palettes.size
                 invalidate()
             }
+            ToolbarAction.STICKER_SEND -> sendSticker()
             ToolbarAction.CLIP_PAUSE -> {
                 clipStore.paused = !clipStore.paused
                 reloadClipboard()
@@ -1026,6 +1510,14 @@ class KeyboardView(context: Context) : View(context) {
                 scrollY = 0f
                 reloadClipboard()
                 invalidate()
+            }
+            ToolbarAction.COPY_PASTE -> {
+                val text = copiedChip
+                copiedChip = null
+                uiHandler.removeCallbacks(clearChipRunnable)
+                rebuildTargets()
+                invalidate()
+                if (text != null) listener?.onPaste(text)
             }
             else -> listener?.onToolbarAction(action)
         }

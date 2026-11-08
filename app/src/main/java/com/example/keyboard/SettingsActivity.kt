@@ -1,9 +1,11 @@
 package com.example.keyboard
 
+import android.animation.ValueAnimator
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
@@ -21,8 +23,10 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
@@ -33,34 +37,57 @@ import java.util.Calendar
 import java.util.Locale
 import kotlin.math.max
 
-/** Setup screen: enable the keyboard, options, typing stats, and encrypted backup. */
+/** Setup, options, typing stats and encrypted backup. */
 class SettingsActivity : Activity() {
 
     private lateinit var stats: TypingStats
     private lateinit var options: KeyboardPrefs
+
+    private lateinit var statusChip: TextView
     private lateinit var enabledStatus: TextView
     private lateinit var selectedStatus: TextView
+
     private lateinit var todayValue: TextView
     private lateinit var totalValue: TextView
     private lateinit var booksValue: TextView
     private lateinit var streakValue: TextView
     private lateinit var bestValue: TextView
     private lateinit var averageValue: TextView
-    private lateinit var topWordsValue: TextView
     private lateinit var chart: BarChart
+    private lateinit var spark: SparkBars
+
     private lateinit var expireButton: Button
+    private lateinit var clipPreview: LinearLayout
+    private lateinit var updateIcon: WavyCircle
+    private lateinit var updateTitle: TextView
+    private lateinit var updateSub: TextView
+
+    private lateinit var tabKeyboard: TextView
+    private lateinit var tabActivity: TextView
+    private lateinit var keyboardPane: LinearLayout
+    private lateinit var activityPane: LinearLayout
+
+    private lateinit var heightLabel: TextView
+    private lateinit var paddingLabel: TextView
+    private val mascotChips = ArrayList<TextView>()
+    private var floatingSwitch: Switch? = null
+
+    private var checkingUpdate = false
+    private var latestRelease: UpdateChecker.Release? = null
 
     private var pendingPassword: CharArray? = null
     private var pendingImport: ByteArray? = null
     private var pendingIncludeClipboard = false
 
-    private val bg = 0xFF121214.toInt()
-    private val cardBg = 0xFF1C1C20.toInt()
-    private val fieldBg = 0xFF2B2B31.toInt()
-    private val textMain = 0xFFECECEF.toInt()
-    private val textDim = 0xFFA8A8B0.toInt()
-    private val accent = 0xFFF2F2F5.toInt()
-    private val onAccent = 0xFF121214.toInt()
+    private val bg = 0xFF0A0A0B.toInt()
+    private val surface = 0xFF151518.toInt()
+    private val raised = 0xFF1F1F24.toInt()
+    private val hair = 0xFF2A2A30.toInt()
+    private val textMain = 0xFFF2F2F5.toInt()
+    private val textDim = 0xFF94949E.toInt()
+    private val textFaint = 0xFF63636C.toInt()
+    private val lime = 0xFFC8F26A.toInt()
+    private val onLime = 0xFF0A0A0B.toInt()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -69,7 +96,7 @@ class SettingsActivity : Activity() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(20), dp(16), dp(28))
+            setPadding(dp(20), dp(10), dp(20), dp(28))
         }
         val scroll = ScrollView(this).apply {
             setBackgroundColor(bg)
@@ -83,179 +110,626 @@ class SettingsActivity : Activity() {
             insets
         }
 
-        root.addView(label("Remaino", 28f, textMain, true))
-        root.addView(label("Private, fast and dark by default.", 15f, textDim, false))
+        root.addView(topBar())
+        root.addView(hero())
 
-        // Setup card
+        val tabRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = roundRect(surface, 12)
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            layoutParams = wideTop(dp(18))
+        }
+        tabKeyboard = tab("Keyboard", true)
+        tabActivity = tab("Activity", false)
+        tabKeyboard.setOnClickListener { showTab(true) }
+        tabActivity.setOnClickListener { showTab(false) }
+        tabRow.addView(tabKeyboard)
+        tabRow.addView(tabActivity)
+        root.addView(tabRow)
+
+        keyboardPane = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        activityPane = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+        }
+        buildKeyboardPane(keyboardPane)
+        buildActivityPane(activityPane)
+        root.addView(keyboardPane)
+        root.addView(activityPane)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val active = isEnabled() && isSelected()        enabledStatus.text = if (isEnabled()) "Enabled" else "Not enabled yet"
+        selectedStatus.text = if (isSelected()) "In use" else "Not selected yet"
+        statusChip.text = if (active) "Active" else "Set up"
+        statusChip.setTextColor(if (active) lime else 0xFFE8B063.toInt())
+        statusChip.background = if (active) {
+            strokeRound(0x1AC8F26A, 0x47C8F26A, 999)
+        } else {
+            strokeRound(0x1AE8B063, 0x47E8B063, 999)
+        }
+        refreshStats()
+        refreshClipboardPreview()
+        maybeAutoCheckUpdates()
+    }
+
+    // ------------------------------------------------------------------ top
+
+    private fun isEnabled(): Boolean {
+        val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+        return imm.enabledInputMethodList.any { it.packageName == packageName }
+    }
+
+    private fun isSelected(): Boolean {
+        val current = Settings.Secure.getString(
+            contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD,
+        ) ?: return false
+        return current.startsWith(packageName)
+    }
+
+    private fun topBar(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(40),
+        )
+        addView(label("Remaino", 21f, textMain, true).also {
+            it.letterSpacing = -0.04f
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        statusChip = label("Set up", 12f, lime, true).apply {
+            setPadding(dp(11), dp(6), dp(11), dp(6))
+            background = strokeRound(0x1AC8F26A, 0x47C8F26A, 999)
+        }
+        addView(statusChip)
+    }
+
+    private fun hero(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.BOTTOM
+        layoutParams = wideTop(dp(20))
+        val left = LinearLayout(this@SettingsActivity).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        todayValue = label("0", 58f, textMain, true).apply {
+            letterSpacing = -0.05f
+            includeFontPadding = false
+        }
+        left.addView(todayValue)
+        left.addView(label("WORDS TODAY", 10f, textDim, true).also {
+            it.letterSpacing = 0.2f
+            it.topPad(8)
+        })
+        addView(left)
+        spark = SparkBars(this@SettingsActivity).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(120), dp(56))
+            color = raised
+            highlight = lime
+        }
+        addView(spark)
+    }
+
+    // ------------------------------------------------------------- keyboard
+
+    private fun buildKeyboardPane(pane: LinearLayout) {
+        // Set up
         val setup = card()
-        setup.addView(label("Set up", 18f, textMain, true))
-        setup.addView(label("1. Enable the keyboard", 15f, textMain, false).also { it.topPad(12) })
-        enabledStatus = label("", 13f, textDim, false)
-        setup.addView(enabledStatus)
-        setup.addView(
-            pill("Open keyboard settings") {
-                startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
-            },
-        )
-        setup.addView(label("2. Choose it as your keyboard", 15f, textMain, false).also { it.topPad(16) })
-        selectedStatus = label("", 13f, textDim, false)
-        setup.addView(selectedStatus)
-        setup.addView(
-            pill("Choose keyboard") {
-                val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
-                imm.showInputMethodPicker()
-            },
-        )
-        root.addView(setup)
+        setup.addView(sectionHeader("Set up"))
+        setup.addView(stepRow("Enable keyboard", enabledStatus, {
+            startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+        }))
+        setup.addView(divider())
+        setup.addView(stepRow("Set as default", selectedStatus, {
+            val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+            imm.showInputMethodPicker()
+        }))
+        pane.addView(setup)
 
-        // Try it card
+        // Try field
         val tryCard = card()
-        tryCard.addView(label("Try it", 18f, textMain, true))
+        tryCard.addView(sectionHeader("Try it"))
         val field = EditText(this).apply {
             hint = "Type here to test"
-            setHintTextColor(textDim)
+            setHintTextColor(textFaint)
             setTextColor(textMain)
-            background = GradientDrawable().apply {
-                setColor(fieldBg)
-                cornerRadius = dp(16).toFloat()
-            }
+            textSize = 14f
+            background = roundRect(raised, 14)
             setPadding(dp(14), dp(12), dp(14), dp(12))
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { topMargin = dp(10) }
+            layoutParams = wideTop(dp(10))
         }
         tryCard.addView(field)
-        root.addView(tryCard)
+        pane.addView(tryCard)
 
-        // Keyboard options card
-        val optionsCard = card()
-        optionsCard.addView(label("Keyboard", 18f, textMain, true))
-        optionsCard.addView(
-            switchRow("Number row", "Show the row of digits above the letters", options.showNumberRow) {
-                options.showNumberRow = it
-            },
-        )
-        optionsCard.addView(
-            switchRow("Key preview", "Show a bubble above the key you press", options.keyPreview) {
-                options.keyPreview = it
-            },
-        )
-        optionsCard.addView(
-            switchRow("Mascot", "A little friend who pushes the cursor back while you delete", options.mascot) {
-                options.mascot = it
-            },
-        )
-        root.addView(optionsCard)
+        // Keyboard options
+        val keys = card()
+        keys.addView(sectionHeader("Keyboard"))
+        keys.addView(switchRow("Number row", "Digits above the letters", options.showNumberRow) {
+            options.showNumberRow = it
+        })
+        keys.addView(switchRow("Key preview", "Bubble above the key you press", options.keyPreview) {
+            options.keyPreview = it
+        })
+        keys.addView(switchRow("Mascot", "A little friend who keeps the caret company", options.mascot) {
+            options.mascot = it
+            updateMascotChips()
+        })
+        keys.addView(mascotPlacementRow())
+        val floatingRow = switchRow(
+            "Floating keyboard",
+            "A movable keyboard window over the app. Needs Display over other apps",
+            options.floatingKeyboard,
+        ) { requestFloating(it) }
+        floatingSwitch = floatingRow.getChildAt(1) as? Switch
+        keys.addView(floatingRow)
+        keys.addView(switchRow("Haptics", "A short buzz on every key", options.haptics) {
+            options.haptics = it
+        })
+        keys.addView(switchRow("Sound", "A soft click on every key", options.sound) {
+            options.sound = it
+        })
+        pane.addView(keys)
 
-        // Clipboard card
-        val clipCard = card()
-        clipCard.addView(label("Clipboard", 18f, textMain, true))
-        clipCard.addView(
+        // Typing behaviour
+        val typing = card()
+        typing.addView(sectionHeader("Typing"))
+        typing.addView(
+            switchRow(
+                "Auto-capitalize",
+                "Capitalize the start of a new sentence",
+                options.autoCapitalize,
+            ) { options.autoCapitalize = it },
+        )
+        typing.addView(
+            switchRow(
+                "Capitalize first letter",
+                "Start a new field with a capital",
+                options.capitalizeFirstLetter,
+            ) { options.capitalizeFirstLetter = it },
+        )
+        typing.addView(
+            switchRow(
+                "Next-word suggestions",
+                "Suggest the word that usually follows",
+                options.nextWordSuggestions,
+            ) { options.nextWordSuggestions = it },
+        )
+        typing.addView(
+            switchRow(
+                "Emoji prediction",
+                "Suggest emoji as you type",
+                options.emojiPrediction,
+            ) { options.emojiPrediction = it },
+        )
+        typing.addView(
+            switchRow(
+                "Block inappropriate suggestions",
+                "Filter explicit words from the suggestion bar",
+                options.blockInappropriate,
+            ) { options.blockInappropriate = it },
+        )
+        typing.addView(emojiToneRow())
+        pane.addView(typing)
+
+        // Size
+        val size = card()
+        size.addView(sectionHeader("Size"))
+        heightLabel = label("", 13f, textDim, false)
+        size.addView(sliderRow("Keyboard height", heightLabel, 80, 130, options.keyboardHeightPercent) {
+            options.keyboardHeightPercent = it
+            heightLabel.text = "${it}%"
+        })
+        heightLabel.text = "${options.keyboardHeightPercent}%"
+        paddingLabel = label("", 13f, textDim, false)
+        size.addView(sliderRow("Bottom padding", paddingLabel, 0, 24, options.keyboardPadding) {
+            options.keyboardPadding = it
+            paddingLabel.text = "${it}dp"
+        })
+        paddingLabel.text = "${options.keyboardPadding}dp"
+        pane.addView(size)
+
+        // Clipboard
+        val clip = card()
+        clip.addView(sectionHeader("Clipboard"))
+        clip.addView(
             switchRow(
                 "Save clipboard history",
                 "Kept encrypted on this phone. Passwords and private fields are skipped.",
                 options.clipboardEnabled,
             ) { options.clipboardEnabled = it },
         )
+        clip.addView(
+            switchRow(
+                "Save copied images",
+                "Encrypted the same way, with a 10 MB cap",
+                options.clipboardImages,
+            ) { options.clipboardImages = it },
+        )
+        clipPreview = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = wideTop(dp(12))
+        }
+        clip.addView(clipPreview)
         expireButton = pill(expireLabel()) { showExpireDialog() }
-        clipCard.addView(expireButton)
-        clipCard.addView(pill("Clear all clipboard history") { confirmClearClipboard() })
-        root.addView(clipCard)
+        clip.addView(expireButton)
+        clip.addView(pill("Clear all clipboard history") { confirmClearClipboard() })
+        pane.addView(clip)
 
-        // Stats card
+        // Privacy
+        val privacy = card()
+        privacy.addView(sectionHeader("Privacy"))
+        privacy.addView(
+            switchRow(
+                "Private apps",
+                "Treat chosen apps like password fields: no suggestions, learning or clipboard",
+                options.perAppSensitive,
+            ) { options.perAppSensitive = it },
+        )
+        privacy.addView(pill("Choose private apps") { showPrivateAppsDialog() })
+        pane.addView(privacy)
+
+        // Update
+        pane.addView(updateCard())
+    }
+
+    private fun mascotPlacementRow(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        setPadding(dp(15), 0, dp(15), dp(13))
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        )
+        mascotChips.clear()
+        listOf(
+            MascotPlacement.TOOLBAR to "Toolbar",
+            MascotPlacement.ABOVE to "Above",
+            MascotPlacement.CURSOR to "At cursor",
+        ).forEach { (placement, name) ->
+            val chip = label(name, 11f, textDim, true).apply {
+                setPadding(dp(11), dp(6), dp(11), dp(6))
+                setOnClickListener { selectMascotPlacement(placement) }
+            }
+            mascotChips.add(chip)
+            addView(
+                chip,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { marginEnd = dp(7) },
+            )
+        }
+        updateMascotChips()
+    }
+
+    private fun requestFloating(on: Boolean) {
+        if (on && !Settings.canDrawOverlays(this)) {
+            AlertDialog.Builder(this)
+                .setTitle("Display over other apps")
+                .setMessage(
+                    "The floating keyboard is drawn in its own window, so Remaino needs this " +
+                        "permission. Without it the normal keyboard is used. Some apps hide " +
+                        "overlay windows; switch this off if the keyboard does not show there. " +
+                        "Drag the small bar at the top of the keyboard to move it.",
+                )
+                .setPositiveButton("Open settings") { _, _ ->
+                    options.floatingKeyboard = true
+                    startActivity(
+                        Intent(
+                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:$packageName"),
+                        ),
+                    )
+                }
+                .setNegativeButton("Not now") { _, _ ->
+                    options.floatingKeyboard = false
+                    floatingSwitch?.isChecked = false
+                }
+                .show()
+            return
+        }
+        options.floatingKeyboard = on
+    }
+
+    private fun selectMascotPlacement(placement: MascotPlacement) {
+        if (placement == MascotPlacement.CURSOR && !Settings.canDrawOverlays(this)) {
+            AlertDialog.Builder(this)
+                .setTitle("Display over other apps")
+                .setMessage(
+                    "To sit exactly on the cursor, Remaino needs permission to draw a small " +
+                        "overlay. Until it is granted, the mascot sits above the keys.",
+                )
+                .setPositiveButton("Open settings") { _, _ ->
+                    options.mascotPlacement = placement
+                    updateMascotChips()
+                    startActivity(
+                        Intent(
+                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:$packageName"),
+                        ),
+                    )
+                }
+                .setNegativeButton("Use Above") { _, _ ->
+                    options.mascotPlacement = MascotPlacement.ABOVE
+                    updateMascotChips()
+                }
+                .show()
+            return
+        }
+        options.mascotPlacement = placement
+        updateMascotChips()
+    }
+
+    private fun updateMascotChips() {
+        val enabled = options.mascot
+        val selected = options.mascotPlacement
+        val order = listOf(MascotPlacement.TOOLBAR, MascotPlacement.ABOVE, MascotPlacement.CURSOR)
+        mascotChips.forEachIndexed { i, chip ->
+            val on = enabled && order.getOrNull(i) == selected
+            chip.setTextColor(if (on) lime else if (enabled) textDim else textFaint)
+            chip.background = if (on) {
+                strokeRound(0x14C8F26A, 0x73C8F26A, 999)
+            } else {
+                strokeRound(0x00000000, hair, 999)
+            }
+            chip.isEnabled = enabled
+            chip.alpha = if (enabled) 1f else 0.45f
+        }
+    }
+
+    private fun emojiToneRow(): LinearLayout = rowShell {
+        val left = LinearLayout(this@SettingsActivity).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        left.addView(label("Emoji skin tone", 14f, textMain, false))
+        left.addView(label(toneName(options.emojiTone), 11f, textFaint, false))
+        addView(left)
+        addView(label("Change", 12f, lime, true).apply {
+            setOnClickListener { showToneDialog() }
+        })
+    }
+
+    private fun toneName(tone: Int): String = when (tone) {
+        1 -> "Light"
+        2 -> "Medium light"
+        3 -> "Medium"
+        4 -> "Medium dark"
+        5 -> "Dark"
+        else -> "No tone"
+    }
+
+    private fun showToneDialog() {
+        val names = arrayOf("No tone", "Light", "Medium light", "Medium", "Medium dark", "Dark")
+        AlertDialog.Builder(this)
+            .setTitle("Emoji skin tone")
+            .setSingleChoiceItems(names, options.emojiTone) { dialog, which ->
+                options.emojiTone = which
+                dialog.dismiss()
+            }
+            .show()
+    }
+
+    private fun showPrivateAppsDialog() {
+        val pm = packageManager
+        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val apps = try {
+            pm.queryIntentActivities(intent, 0)
+                .map { it.activityInfo.packageName to it.loadLabel(pm).toString() }
+                .distinctBy { it.first }
+                .sortedBy { it.second.lowercase(Locale.getDefault()) }
+        } catch (e: Exception) {
+            emptyList()
+        }
+        val chosen = options.sensitivePackages().toMutableSet()
+        val checks = ArrayList<Pair<String, CheckBox>>()
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), 0)
+        }
+        val listScroll = ScrollView(this).apply {
+            addView(box)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(380),
+            )
+        }
+        for ((pkg, name) in apps) {
+            val check = CheckBox(this).apply {
+                text = name
+                isChecked = pkg in chosen
+                setTextColor(textMain)
+                textSize = 14f
+            }
+            checks.add(pkg to check)
+            box.addView(check)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Private apps")
+            .setMessage("No suggestions, learning or clipboard saving in these apps.")
+            .setView(listScroll)
+            .setPositiveButton("Save") { _, _ ->
+                val set = HashSet<String>()
+                for ((pkg, check) in checks) if (check.isChecked) set.add(pkg)
+                options.setSensitivePackages(set)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun updateCard(): LinearLayout = card().apply {
+        val row = rowShell {
+            updateIcon = WavyCircle(this@SettingsActivity).apply {
+                layoutParams = LinearLayout.LayoutParams(dp(34), dp(34))
+                accent = lime
+                track = raised
+            }
+            addView(updateIcon)
+            val body = LinearLayout(this@SettingsActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(12), 0, 0, 0)
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            }
+            updateTitle = label("Check for updates", 14f, textMain, true)
+            updateSub = label(updateSubLabel(), 11f, textFaint, false)
+            body.addView(updateTitle)
+            body.addView(updateSub)
+            addView(body)
+        }
+        row.setOnClickListener { onUpdateTapped() }
+        addView(row)
+    }
+
+    private fun updateSubLabel(): String {
+        val last = options.lastUpdateCheck
+        if (last == 0L) return "Once a week, or whenever you ask"
+        val fmt = SimpleDateFormat("d MMM", Locale.getDefault())
+        return "Last checked ${fmt.format(last)} · once a week"
+    }
+
+    private fun onUpdateTapped() {
+        val release = latestRelease
+        if (release != null) {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(release.pageUrl)))
+            return
+        }
+        if (!checkingUpdate) checkForUpdates()
+    }
+
+    private fun checkForUpdates() {
+        checkingUpdate = true
+        updateIcon.start()
+        updateTitle.text = "Checking for updates…"
+        updateSub.text = "Talking to GitHub only"
+        Thread {
+            val release = UpdateChecker.fetchLatest()
+            val installed = try {
+                packageManager.getPackageInfo(packageName, 0).versionName ?: "0"
+            } catch (e: Exception) {
+                "0"
+            }
+            runOnUiThread {
+                checkingUpdate = false
+                updateIcon.stop()
+                options.lastUpdateCheck = System.currentTimeMillis()
+                latestRelease = null
+                when {
+                    release == null -> {
+                        updateTitle.text = "Check for updates"
+                        updateSub.text = "Could not reach GitHub. Try again later."
+                    }
+                    UpdateChecker.isNewer(release.tag, installed) -> {
+                        latestRelease = release
+                        updateTitle.text = "Update available · v${release.tag}"
+                        updateSub.text = "Tap to open the release page"
+                    }
+                    else -> {
+                        updateTitle.text = "You're up to date"
+                        updateSub.text = "Remaino v$installed"
+                    }
+                }
+            }
+        }.start()
+    }
+
+    private fun maybeAutoCheckUpdates() {
+        val last = options.lastUpdateCheck
+        val week = 7L * 24 * 60 * 60 * 1000
+        if (last == 0L) {
+            options.lastUpdateCheck = System.currentTimeMillis()
+            return
+        }
+        if (System.currentTimeMillis() - last > week && !checkingUpdate) {
+            checkForUpdates()
+        }
+    }
+
+    // ------------------------------------------------------------- activity
+
+    private fun buildActivityPane(pane: LinearLayout) {
         val statsCard = card()
-        statsCard.addView(label("Typing stats", 18f, textMain, true))
-        statsCard.addView(label("Today", 13f, textDim, false).also { it.topPad(12) })
-        todayValue = label("0", 28f, textMain, true)
-        statsCard.addView(todayValue)
-        statsCard.addView(label("Since you installed", 13f, textDim, false).also { it.topPad(12) })
-        totalValue = label("0 words", 22f, textMain, true)
+        statsCard.addView(sectionHeader("Typing"))
+        statsCard.addView(label("Since you installed", 12f, textDim, false).also {
+            it.topPad(10)
+        })
+        totalValue = label("0 words", 30f, textMain, true).also {
+            it.letterSpacing = -0.03f
+        }
         statsCard.addView(totalValue)
-        booksValue = label("0.0 books", 15f, textDim, false)
+        booksValue = label("0.0 books", 13f, textDim, false)
         statsCard.addView(booksValue)
 
         chart = BarChart(this).apply {
-            barColor = fieldBg
-            highlightColor = accent
-            textColor = textDim
+            barColor = raised
+            highlightColor = lime
+            textColor = textFaint
             layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { topMargin = dp(14) }
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = dp(16) }
         }
-        statsCard.addView(label("Last 7 days", 13f, textDim, false).also { it.topPad(14) })
+        statsCard.addView(label("Last 7 days", 12f, textDim, false))
         statsCard.addView(chart)
 
-        statsCard.addView(label("Streak", 13f, textDim, false).also { it.topPad(12) })
-        streakValue = label("0 days", 16f, textMain, false)
-        statsCard.addView(streakValue)
-        statsCard.addView(label("Best day", 13f, textDim, false).also { it.topPad(10) })
-        bestValue = label("0 words", 16f, textMain, false)
-        statsCard.addView(bestValue)
-        statsCard.addView(label("Average on days you type", 13f, textDim, false).also { it.topPad(10) })
-        averageValue = label("0 words", 16f, textMain, false)
-        statsCard.addView(averageValue)
-        statsCard.addView(label("Most used words", 13f, textDim, false).also { it.topPad(10) })
-        topWordsValue = label("None yet", 16f, textMain, false)
-        statsCard.addView(topWordsValue)
-
-        statsCard.addView(label("Counts only. Your messages are never saved.", 12f, textDim, false).also { it.topPad(12) })
+        val three = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = wideTop(dp(14))
+        }
+        val streakBlock = metricBlock("Streak", emptyLabel())
+        streakValue = streakBlock.findViewWithTag("value") as TextView
+        three.addView(streakBlock, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val b1 = metricBlock("Best day", emptyLabel())
+        bestValue = b1.findViewWithTag("value") as TextView
+        three.addView(b1, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val b2 = metricBlock("Average", emptyLabel())
+        averageValue = b2.findViewWithTag("value") as TextView
+        three.addView(b2, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        statsCard.addView(three)
         statsCard.addView(
-            pill("Reset stats") {
-                stats.reset()
-                refreshStats()
+            label("Counts only. Your messages are never saved.", 11f, textFaint, false).also {
+                it.topPad(10)
             },
         )
-        statsCard.addView(
-            pill("Forget learned words") {
-                WordFrequencies.get(this).clear()
-                refreshStats()
-            },
-        )
-        root.addView(statsCard)
+        statsCard.addView(pill("Reset stats") {
+            stats.reset()
+            refreshStats()
+        })
+        pane.addView(statsCard)
 
-        // Backup card
         val backup = card()
-        backup.addView(label("Backup", 18f, textMain, true))
+        backup.addView(sectionHeader("Backup"))
         backup.addView(
             label(
-                "Save your settings, stats and learned words in one file protected by a password. " +
+                "Settings, stats and learned words in one file protected by a password. " +
                     "If you forget the password the file cannot be opened.",
-                13f,
+                12f,
                 textDim,
                 false,
             ).also { it.topPad(8) },
         )
         backup.addView(pill("Export backup") { showExportDialog() })
         backup.addView(pill("Import backup") { startImportPicker() })
-        root.addView(backup)
+        pane.addView(backup)
     }
 
-    override fun onResume() {
-        super.onResume()
-        enabledStatus.text = if (isEnabled()) "Enabled" else "Not enabled yet"
-        selectedStatus.text = if (isSelected()) "In use" else "Not selected yet"
-        refreshStats()
+    private fun emptyLabel(): TextView = label("", 20f, textMain, true)
+
+    private fun metricBlock(title: String, value: TextView): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(0, 0, dp(8), 0)
+        addView(label(title, 11f, textDim, false))
+        value.tag = "value"
+        addView(value)
     }
 
     private fun refreshStats() {
-        val total = stats.totalWords()
         val locale = Locale.getDefault()
+        val total = stats.totalWords()
         todayValue.text = String.format(locale, "%,d", stats.todayWords())
         totalValue.text = String.format(locale, "%,d words", total)
         booksValue.text = String.format(locale, "%.1f books", StatsMath.books(total))
         streakValue.text = String.format(locale, "%d days", stats.streak())
-        bestValue.text = String.format(locale, "%,d words", stats.bestDay())
-        averageValue.text = String.format(locale, "%,d words", stats.averagePerActiveDay())
+        bestValue.text = String.format(locale, "%,d", stats.bestDay())
+        averageValue.text = String.format(locale, "%,d", stats.averagePerActiveDay())
         chart.labels = lastSevenLabels()
         chart.values = stats.lastDays(7).reversed()
-        val top = WordFrequencies.get(this).top(5)
-        topWordsValue.text = if (top.isEmpty()) {
-            "None yet"
-        } else {
-            top.joinToString("\n") { "${it.first}  (${it.second})" }
-        }
+        spark.values = stats.lastDays(7).reversed().map { it.toFloat() }
     }
 
     private fun lastSevenLabels(): List<String> {
@@ -267,18 +741,71 @@ class SettingsActivity : Activity() {
         }
     }
 
-    private fun isEnabled(): Boolean {
-        val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
-        return imm.enabledInputMethodList.any { it.packageName == packageName }
+    private fun refreshClipboardPreview() {
+        clipPreview.removeAllViews()
+        val items = ClipboardStore.get(this).items().take(2)
+        if (items.isEmpty()) {
+            clipPreview.addView(
+                label("Copied text will appear here", 12f, textFaint, false).also {
+                    it.setPadding(0, dp(4), 0, dp(4))
+                },
+            )
+            return
+        }
+        items.forEachIndexed { index, item ->
+            val cardView = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                background = if (index == 0) {
+                    strokeRound(surface, 0x40C8F26A, 15)
+                } else {
+                    roundRect(surface, 15)
+                }
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    .apply { marginEnd = if (index == 0) dp(9) else 0 }
+            }
+            cardView.addView(
+                label(item.text.replace('\n', ' '), 12f, textMain, false).apply {
+                    maxLines = 2
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    setLineSpacing(0f, 1.15f)
+                },
+            )
+            cardView.addView(label(relativeTime(item.time), 10f, textFaint, false).also {
+                it.topPad(8)
+            })
+            clipPreview.addView(cardView)
+        }
     }
 
-    private fun isSelected(): Boolean {
-        val id = Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
-            ?: return false
-        return id.startsWith("$packageName/")
+    private fun relativeTime(time: Long): String {
+        val diff = System.currentTimeMillis() - time
+        return when {
+            diff < 60_000 -> "just now"
+            diff < 3_600_000 -> "${diff / 60_000}m ago"
+            diff < 86_400_000 -> "${diff / 3_600_000}h ago"
+            else -> "${diff / 86_400_000}d ago"
+        }
     }
 
-    // ---------- backup ----------
+    private fun showTab(keyboard: Boolean) {
+        keyboardPane.visibility = if (keyboard) View.VISIBLE else View.GONE
+        activityPane.visibility = if (keyboard) View.GONE else View.VISIBLE
+        tabKeyboard.background = if (keyboard) roundRect(raised, 9) else null
+        tabActivity.background = if (!keyboard) roundRect(raised, 9) else null
+        tabKeyboard.setTextColor(if (keyboard) textMain else textDim)
+        tabActivity.setTextColor(if (!keyboard) textMain else textDim)
+    }
+
+    private fun tab(name: String, selected: Boolean): TextView =
+        label(name, 13f, if (selected) textMain else textDim, true).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, dp(8), 0, dp(8))
+            background = if (selected) roundRect(raised, 9) else null
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+
+    // ------------------------------------------------------------- backup
 
     private fun passwordField(hintText: String): EditText = EditText(this).apply {
         hint = hintText
@@ -289,7 +816,7 @@ class SettingsActivity : Activity() {
 
     private fun dialogBox(vararg views: View): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(dp(20), dp(8), dp(20), dp(0))
+        setPadding(dp(20), dp(8), dp(20), 0)
         for (v in views) addView(v)
     }
 
@@ -385,7 +912,8 @@ class SettingsActivity : Activity() {
         Thread {
             val message = try {
                 val bytes = BackupCrypto.encrypt(BackupManager.buildJson(this, includeClipboard), password)
-                val out = contentResolver.openOutputStream(uri) ?: throw BackupException("Could not write the file.")
+                val out = contentResolver.openOutputStream(uri)
+                    ?: throw BackupException("Could not write the file.")
                 out.use { it.write(bytes) }
                 "Backup saved."
             } catch (e: Exception) {
@@ -420,6 +948,7 @@ class SettingsActivity : Activity() {
                     try {
                         BackupManager.apply(this, finalJson)
                         refreshStats()
+                        refreshClipboardPreview()
                         toast("Backup restored.")
                     } catch (e: Exception) {
                         toast(e.message ?: "Restore failed.")
@@ -428,6 +957,8 @@ class SettingsActivity : Activity() {
             }
         }.start()
     }
+
+    // ------------------------------------------------------------ clipboard
 
     private val expireChoices = intArrayOf(1, 24, 168, 0)
     private val expireNames = arrayOf("1 hour", "24 hours", "7 days", "Never")
@@ -454,17 +985,14 @@ class SettingsActivity : Activity() {
             .setMessage("This deletes every saved item, including pinned ones.")
             .setPositiveButton("Clear all") { _, _ ->
                 ClipboardStore.get(this).clearAll()
+                refreshClipboardPreview()
                 toast("Clipboard history cleared.")
             }
             .setNegativeButton("Cancel", null)
             .show()
     }
 
-    private fun toast(message: String) {
-        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-    }
-
-    // ---------- small UI helpers ----------
+    // -------------------------------------------------------------- helpers
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
@@ -480,59 +1008,253 @@ class SettingsActivity : Activity() {
             if (bold) setTypeface(typeface, Typeface.BOLD)
         }
 
+    private fun sectionHeader(title: String): TextView =
+        label(title, 16f, textMain, true).apply { letterSpacing = -0.02f }
+
     private fun card(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(dp(18), dp(16), dp(18), dp(16))
-        background = GradientDrawable().apply {
-            setColor(cardBg)
-            cornerRadius = dp(20).toFloat()
-        }
-        layoutParams = LinearLayout.LayoutParams(
+        setPadding(dp(16), dp(15), dp(16), dp(15))
+        background = roundRect(surface, 18)
+        layoutParams = wideTop(dp(14))
+    }
+
+    private fun wideTop(margin: Int): LinearLayout.LayoutParams =
+        LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { topMargin = dp(14) }
-    }
+        ).apply { topMargin = margin }
 
-    private fun pill(label: String, onClick: () -> Unit): Button = Button(this).apply {
-        text = label
-        isAllCaps = false
-        setTextColor(onAccent)
-        background = GradientDrawable().apply {
-            setColor(accent)
-            cornerRadius = dp(24).toFloat()
-        }
-        stateListAnimator = null
-        setOnClickListener { onClick() }
+    private fun divider(): View = View(this).apply {
+        setBackgroundColor(hair)
         layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            dp(48),
-        ).apply { topMargin = dp(10) }
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(1),
+        ).apply { topMargin = dp(10); bottomMargin = dp(10) }
     }
 
-    private fun switchRow(title: String, description: String, checked: Boolean, onChange: (Boolean) -> Unit): LinearLayout {
-        val row = LinearLayout(this).apply {
+    private fun rowShell(content: LinearLayout.() -> Unit): LinearLayout =
+        LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(10), 0, dp(4))
+            setPadding(dp(15), dp(11), dp(15), dp(11))
+            content()
         }
-        val texts = LinearLayout(this).apply {
+
+    private fun stepRow(title: String, status: TextView, onClick: () -> Unit): LinearLayout =
+        rowShell {
+            addView(label("✓", 12f, lime, true).apply {
+                gravity = Gravity.CENTER
+                background = strokeRound(0x24C8F26A, 0x00000000, 999)
+                layoutParams = LinearLayout.LayoutParams(dp(22), dp(22)).apply { marginEnd = dp(11) }
+            })
+            val body = LinearLayout(this@SettingsActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            }
+            body.addView(label(title, 14f, textMain, false))
+            status.textSize = 11f
+            status.setTextColor(textFaint)
+            body.addView(status)
+            addView(body)
+            addView(label("›", 18f, textFaint, false))
+            setOnClickListener { onClick() }
+        }
+
+    private fun switchRow(
+        title: String,
+        description: String,
+        checked: Boolean,
+        onChange: (Boolean) -> Unit,
+    ): LinearLayout = rowShell {
+        val texts = LinearLayout(this@SettingsActivity).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
-        texts.addView(label(title, 15f, textMain, false))
-        texts.addView(label(description, 13f, textDim, false))
-        val toggle = Switch(this).apply {
+        texts.addView(label(title, 14f, textMain, false))
+        texts.addView(label(description, 11f, textFaint, false).also { it.topPad(2) })
+        addView(texts)
+        addView(styledSwitch(checked, onChange))
+    }
+
+    private fun styledSwitch(checked: Boolean, onChange: (Boolean) -> Unit): Switch =
+        Switch(this).apply {
             isChecked = checked
+            thumbTintList = ColorStateList(
+                arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                intArrayOf(lime, 0xFF8B8B94.toInt()),
+            )
+            trackTintList = ColorStateList(
+                arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                intArrayOf(0x47C8F26A, 0xFF33333A.toInt()),
+            )
             setOnCheckedChangeListener { _, value -> onChange(value) }
         }
-        row.addView(texts)
-        row.addView(toggle)
-        return row
+
+    private fun pill(labelText: String, onClick: () -> Unit): Button = Button(this).apply {
+        text = labelText
+        isAllCaps = false
+        textSize = 13f
+        setTextColor(onLime)
+        background = roundRect(lime, 999)
+        stateListAnimator = null
+        setOnClickListener { onClick() }
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(46),
+        ).apply { topMargin = dp(10) }
+    }
+
+    private fun sliderRow(
+        title: String,
+        value: TextView,
+        min: Int,
+        max: Int,
+        initial: Int,
+        onChange: (Int) -> Unit,
+    ): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(15), dp(8), dp(15), dp(6))
+        val head = LinearLayout(this@SettingsActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        head.addView(label(title, 14f, textMain, false).also {
+            it.layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        head.addView(value)
+        addView(head)
+        addView(SeekBar(this@SettingsActivity).apply {
+            this.max = max - min
+            progress = initial - min
+            progressTintList = ColorStateList.valueOf(lime)
+            thumbTintList = ColorStateList.valueOf(lime)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    if (fromUser) onChange(progress + min)
+                }
+                override fun onStartTrackingTouch(bar: SeekBar?) = Unit
+                override fun onStopTrackingTouch(bar: SeekBar?) = Unit
+            })
+        })
+    }
+
+    private fun roundRect(color: Int, radius: Int): GradientDrawable = GradientDrawable().apply {
+        setColor(color)
+        cornerRadius = dp(radius).toFloat()
+    }
+
+    private fun strokeRound(fill: Int, stroke: Int, radius: Int): GradientDrawable =
+        GradientDrawable().apply {
+            setColor(fill)
+            setStroke(dp(1), stroke)
+            cornerRadius = dp(radius).toFloat()
+        }
+
+    private fun toast(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
     }
 
     private companion object {
         const val REQ_EXPORT = 1
         const val REQ_IMPORT = 2
+    }
+}
+
+/** Small seven-bar sparkline used in the hero block. */
+private class SparkBars(context: Context) : View(context) {
+    var values: List<Float> = emptyList()
+        set(value) {
+            field = value
+            invalidate()
+        }
+    var color: Int = 0
+    var highlight: Int = 0
+
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val rect = RectF()
+
+    private fun dp(v: Float): Float =
+        TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, resources.displayMetrics)
+
+    override fun onDraw(canvas: Canvas) {
+        if (values.isEmpty()) return
+        val maxValue = max(1f, values.maxOrNull() ?: 1f)
+        val gap = dp(5f)
+        val barW = dp(7f)
+        val totalW = values.size * barW + (values.size - 1) * gap
+        val startX = width - totalW
+        val base = height - dp(2f)
+        val chartH = height - dp(8f)
+        for (i in values.indices) {
+            val h = max(dp(4f), chartH * values[i] / maxValue)
+            val x = startX + i * (barW + gap)
+            rect.set(x, base - h, x + barW, base)
+            paint.color = if (i == values.lastIndex) highlight else color
+            canvas.drawRoundRect(rect, dp(3f), dp(3f), paint)
+        }
+    }
+}
+
+/** Material-style wavy circle used by the update row. */
+private class WavyCircle(context: Context) : View(context) {
+    var accent: Int = 0
+    var track: Int = 0
+
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeWidth = resources.displayMetrics.density * 2.4f
+    }
+    private var phase = 0f
+    private var animator: ValueAnimator? = null
+
+    fun start() {
+        if (animator != null) return
+        animator = ValueAnimator.ofFloat(0f, (2 * Math.PI).toFloat()).apply {
+            duration = 1100L
+            repeatCount = ValueAnimator.INFINITE
+            addUpdateListener {
+                phase = it.animatedValue as Float
+                invalidate()
+            }
+            start()
+        }
+    }
+
+    fun stop() {
+        animator?.cancel()
+        animator = null
+        phase = 0f
+        invalidate()
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val cx = width / 2f
+        val cy = height / 2f
+        val r = minOf(cx, cy) - paint.strokeWidth
+        paint.color = track
+        canvas.drawCircle(cx, cy, r, paint)
+
+        if (animator == null) {
+            paint.color = accent
+            canvas.drawCircle(cx, cy, r, paint)
+            // small tick so the idle state reads as "ready to check"
+            paint.style = Paint.Style.FILL
+            canvas.drawCircle(cx, cy, r * 0.18f, paint)
+            paint.style = Paint.Style.STROKE
+            return
+        }
+
+        paint.color = accent
+        val steps = 48
+        var lastX = 0f
+        var lastY = 0f
+        for (i in 0..steps) {
+            val a = (i.toFloat() / steps) * (2 * Math.PI).toFloat()
+            val wave = r + kotlin.math.sin(a * 6f + phase) * (r * 0.07f)
+            val x = cx + kotlin.math.cos(a) * wave
+            val y = cy + kotlin.math.sin(a) * wave
+            if (i > 0) canvas.drawLine(lastX, lastY, x, y, paint)
+            lastX = x
+            lastY = y
+        }
     }
 }
 

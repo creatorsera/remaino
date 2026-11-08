@@ -79,3 +79,14 @@ To create the Gradle wrapper once: `gradle wrapper --gradle-version 9.6.0` and c
 - This first version was written without being compiled. If the first GitHub Actions run fails, open the failed step and share the error text to get it fixed.
 - Toolchain: Android Gradle Plugin 9.4.0 with Gradle 9.6.0, compileSdk 36, built-in Kotlin. Keep these in step: Dependabot PRs that bump only one of them will fail the build, so merge them together or close them.
 - Action versions in the workflows may have newer majors; Dependabot will open update PRs.
+
+
+## Added in this version
+- **Emoji search:** in the emoji sheet, tap the magnifier tab and type; matching emoji appear in the toolbar.
+- **Text stickers:** open the tray, tap the sticker icon, type text, pick a colour and send. It is shared as a PNG, so the app you are typing in must accept images from keyboards.
+- **Clipboard images:** images you copy are saved encrypted. Tap one in the clipboard to paste it (same image rule as stickers).
+- **Roman Urdu to Urdu:** type a Roman Urdu word (for example `kya` or `shukriya`) and the Urdu spelling appears as a suggestion. About 700 common words are built in. Only exact matches are offered.
+- **Floating keyboard:** turn it on in the app. It needs "Display over other apps". Drag the small bar at the top to move it. Some apps hide overlay windows; switch it off there.
+- **Mascot at the cursor:** with "At cursor" selected and the overlay permission granted, the mascot sits next to the real caret. Without the permission, or in editors that do not report the caret, it stays in the band above the keys.
+
+Sticker and image sharing, the floating window and the cursor overlay depend on the phone and the app you type in, so test them on your own device.

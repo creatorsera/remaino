@@ -12,16 +12,29 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-data class ClipItem(val text: String, val pinned: Boolean, val time: Long)
+data class ClipItem(
+    val text: String,
+    val pinned: Boolean,
+    val time: Long,
+    /** Base64 PNG/JPEG bytes for an image item; null for text. */
+    val image: String? = null,
+)
 
 /** Pure list rules for the clipboard history (newest first). */
 object ClipboardLogic {
     const val MAX_UNPINNED = 50
 
     fun add(items: List<ClipItem>, text: String, now: Long): List<ClipItem> {
-        val existing = items.firstOrNull { it.text == text }
-        val rest = items.filter { it.text != text }
+        val existing = items.firstOrNull { it.text == text && it.image == null }
+        val rest = items.filterNot { it.text == text && it.image == null }
         return trim(listOf(ClipItem(text, existing?.pinned ?: false, now)) + rest)
+    }
+
+    /** Adds an image item. Identity is its base64 payload, so the same image is not duplicated. */
+    fun addImage(items: List<ClipItem>, image: String, now: Long): List<ClipItem> {
+        val existing = items.firstOrNull { it.image == image }
+        val rest = items.filter { it.image != image }
+        return trim(listOf(ClipItem("Image", existing?.pinned ?: false, now, image)) + rest)
     }
 
     /** Keeps every pinned item and the newest MAX_UNPINNED others. */
@@ -44,7 +57,12 @@ object ClipboardLogic {
     fun togglePin(items: List<ClipItem>, text: String): List<ClipItem> =
         items.map { if (it.text == text) it.copy(pinned = !it.pinned) else it }
 
-    fun remove(items: List<ClipItem>, text: String): List<ClipItem> = items.filter { it.text != text }
+    fun remove(items: List<ClipItem>, text: String): List<ClipItem> =
+        items.filterNot { it.text == text }
+
+    /** Removes one exact item (text or image). */
+    fun removeItem(items: List<ClipItem>, item: ClipItem): List<ClipItem> =
+        items.filterNot { it === item || (it.text == item.text && it.image == item.image) }
 
     fun clearUnpinned(items: List<ClipItem>): List<ClipItem> = items.filter { it.pinned }
 }
@@ -120,9 +138,36 @@ class ClipboardStore private constructor(context: Context) {
     }
 
     @Synchronized
+    fun addImage(base64: String) {
+        if (!options.clipboardEnabled || options.clipboardPaused || !options.clipboardImages) return
+        ensureLoaded()
+        items = ClipboardLogic.addImage(items, base64, System.currentTimeMillis())
+        save()
+    }
+
+    @Synchronized
     fun togglePin(text: String) {
         ensureLoaded()
         items = ClipboardLogic.togglePin(items, text)
+        save()
+    }
+
+    @Synchronized
+    fun togglePin(item: ClipItem) {
+        ensureLoaded()
+        val idx = items.indexOfFirst { it.text == item.text && it.image == item.image }
+        if (idx >= 0) {
+            items = items.toMutableList().also {
+                it[idx] = it[idx].copy(pinned = !it[idx].pinned)
+            }
+            save()
+        }
+    }
+
+    @Synchronized
+    fun remove(item: ClipItem) {
+        ensureLoaded()
+        items = ClipboardLogic.removeItem(items, item)
         save()
     }
 
@@ -187,7 +232,12 @@ class ClipboardStore private constructor(context: Context) {
         for (i in 0 until arr.length()) {
             val o: JSONObject = arr.optJSONObject(i) ?: continue
             val text = o.optString("t", "")
-            if (text.isNotEmpty()) out.add(ClipItem(text, o.optBoolean("p", false), o.optLong("c", 0L)))
+            val image = if (o.has("i")) o.optString("i", "") else ""
+            if (image.isNotEmpty()) {
+                out.add(ClipItem(text.ifEmpty { "Image" }, o.optBoolean("p", false), o.optLong("c", 0L), image))
+            } else if (text.isNotEmpty()) {
+                out.add(ClipItem(text, o.optBoolean("p", false), o.optLong("c", 0L)))
+            }
         }
         return out
     }
@@ -195,7 +245,9 @@ class ClipboardStore private constructor(context: Context) {
     private fun toJson(list: List<ClipItem>): JSONArray {
         val arr = JSONArray()
         for (item in list) {
-            arr.put(JSONObject().put("t", item.text).put("p", item.pinned).put("c", item.time))
+            val obj = JSONObject().put("t", item.text).put("p", item.pinned).put("c", item.time)
+            if (item.image != null) obj.put("i", item.image)
+            arr.put(obj)
         }
         return arr
     }
