@@ -16,6 +16,23 @@ enum class MascotPlacement(val key: String) {
     }
 }
 
+/** Reo's coat colours. The face always uses a dark ink so every coat stays readable. */
+enum class MascotColor(val key: String, val label: String, val body: Int, val ink: Int) {
+    LIME("lime", "Lime", 0xFFC8F26A.toInt(), 0xFF0A0A0B.toInt()),
+    MINT("mint", "Mint", 0xFF8EF0C0.toInt(), 0xFF0A0A0B.toInt()),
+    SKY("sky", "Sky", 0xFF8FD3FF.toInt(), 0xFF0A0A0B.toInt()),
+    VIOLET("violet", "Violet", 0xFFB9A0FF.toInt(), 0xFF0A0A0B.toInt()),
+    CORAL("coral", "Coral", 0xFFFF9E9E.toInt(), 0xFF0A0A0B.toInt()),
+    AMBER("amber", "Amber", 0xFFFFD166.toInt(), 0xFF0A0A0B.toInt()),
+    ROSE("rose", "Rose", 0xFFFFA8D5.toInt(), 0xFF0A0A0B.toInt()),
+    SNOW("snow", "Snow", 0xFFF2F2F5.toInt(), 0xFF0A0A0B.toInt());
+
+    companion object {
+        fun from(value: String?): MascotColor =
+            entries.firstOrNull { it.key == value } ?: LIME
+    }
+}
+
 /**
  * Keyboard options chosen in the settings screen.
  *
@@ -47,6 +64,21 @@ class KeyboardPrefs(context: Context) {
     var mascotPlacement: MascotPlacement
         get() = MascotPlacement.from(prefs.getString(KEY_MASCOT_PLACEMENT, null))
         set(value) { prefs.edit().putString(KEY_MASCOT_PLACEMENT, value.key).apply() }
+
+    /** Reo's coat colour. */
+    var mascotColor: MascotColor
+        get() = MascotColor.from(prefs.getString(KEY_MASCOT_COLOR, null))
+        set(value) { prefs.edit().putString(KEY_MASCOT_COLOR, value.key).apply() }
+
+    /** Fine nudge, in dp. Negative is up. */
+    var mascotOffsetY: Int
+        get() = prefs.getInt(KEY_MASCOT_OFFSET_Y, -3)
+        set(value) { prefs.edit().putInt(KEY_MASCOT_OFFSET_Y, value.coerceIn(-24, 24)).apply() }
+
+    /** Negative is left. */
+    var mascotOffsetX: Int
+        get() = prefs.getInt(KEY_MASCOT_OFFSET_X, 0)
+        set(value) { prefs.edit().putInt(KEY_MASCOT_OFFSET_X, value.coerceIn(-24, 24)).apply() }
 
     var haptics: Boolean
         get() = prefs.getBoolean(KEY_HAPTICS, true)
@@ -162,6 +194,9 @@ class KeyboardPrefs(context: Context) {
         .put("keyPreview", keyPreview)
         .put("mascot", mascot)
         .put("mascotPlacement", mascotPlacement.key)
+        .put("mascotColor", mascotColor.key)
+        .put("mascotOffsetX", mascotOffsetX)
+        .put("mascotOffsetY", mascotOffsetY)
         .put("haptics", haptics)
         .put("sound", sound)
         .put("autoCapitalize", autoCapitalize)
@@ -186,6 +221,9 @@ class KeyboardPrefs(context: Context) {
         if (json.has("mascotPlacement")) {
             mascotPlacement = MascotPlacement.from(json.getString("mascotPlacement"))
         }
+        if (json.has("mascotColor")) mascotColor = MascotColor.from(json.optString("mascotColor"))
+        if (json.has("mascotOffsetX")) mascotOffsetX = json.optInt("mascotOffsetX", 0)
+        if (json.has("mascotOffsetY")) mascotOffsetY = json.optInt("mascotOffsetY", -3)
         if (json.has("haptics")) haptics = json.getBoolean("haptics")
         if (json.has("sound")) sound = json.getBoolean("sound")
         if (json.has("autoCapitalize")) autoCapitalize = json.getBoolean("autoCapitalize")
@@ -261,6 +299,9 @@ class KeyboardPrefs(context: Context) {
         const val KEY_PREVIEW = "key_preview"
         const val KEY_MASCOT = "mascot"
         const val KEY_MASCOT_PLACEMENT = "mascot_placement"
+        const val KEY_MASCOT_COLOR = "mascot_color"
+        const val KEY_MASCOT_OFFSET_X = "mascot_offset_x"
+        const val KEY_MASCOT_OFFSET_Y = "mascot_offset_y"
         const val KEY_HAPTICS = "haptics"
         const val KEY_SOUND = "sound"
         const val KEY_AUTO_CAP = "auto_capitalize"

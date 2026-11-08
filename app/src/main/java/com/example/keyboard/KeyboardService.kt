@@ -41,6 +41,10 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
 
     private var clipManager: ClipboardManager? = null
     private val clipListener = ClipboardManager.OnPrimaryClipChangedListener { captureClip() }
+    private var lastClipText: String? = null
+    private var lastClipUri: String? = null
+    private var pendingClipText: String? = null
+    private var pendingClipAt = 0L
     private lateinit var prefs: KeyboardPrefs
 
     private lateinit var floatingHost: FloatingHost
@@ -178,6 +182,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         )
         keyboardView.setShift(if (shouldAutoCapitalize(info, cls)) ShiftState.ONE_SHOT else ShiftState.OFF)
         refreshSuggestions()
+        syncClipboardOnOpen()
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
@@ -255,7 +260,8 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
     /**
      * Shift with a selection cycles the case of the selected text:
      * lowercase -> Title -> UPPERCASE -> lowercase. A double tap jumps to UPPERCASE.
-     * With nothing selected it toggles caps lock for the whole keyboard.
+     * With nothing selected: one tap capitalises the next letter, a quick second tap
+     * locks caps, and another tap turns shift off.
      */
     override fun onShift() {
         val ic = currentInputConnection
@@ -264,10 +270,10 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         } catch (e: Exception) {
             null
         }
+        val now = SystemClock.uptimeMillis()
+        val doubleTap = now - lastShiftTap < 350L
+        lastShiftTap = now
         if (!selected.isNullOrEmpty()) {
-            val now = SystemClock.uptimeMillis()
-            val doubleTap = now - lastShiftTap < 350L
-            lastShiftTap = now
             val lower = selected.lowercase()
             val upper = selected.uppercase()
             val title = titleCase(selected)
@@ -281,10 +287,10 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
             keyboardView.setShift(ShiftState.OFF)
             return
         }
-        val next = if (keyboardView.shiftState == ShiftState.CAPS) {
-            ShiftState.OFF
-        } else {
-            ShiftState.CAPS
+        val next = when (keyboardView.shiftState) {
+            ShiftState.OFF -> ShiftState.ONE_SHOT
+            ShiftState.ONE_SHOT -> if (doubleTap) ShiftState.CAPS else ShiftState.OFF
+            ShiftState.CAPS -> ShiftState.OFF
         }
         keyboardView.setShift(next)
     }
@@ -514,25 +520,30 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         }
         val dm = resources.displayMetrics
         val size = mascotOverlay.sizePx
-        val x = (caretScreenX + 16 * dm.density - size / 2f).toInt().coerceIn(0, maxOf(0, dm.widthPixels - size))
-        val y = (caretScreenTop - 12 * dm.density - size / 2f).toInt().coerceAtLeast(0)
+        val offsetX = prefs.mascotOffsetX * dm.density
+        val offsetY = prefs.mascotOffsetY * dm.density
+        val x = (caretScreenX + 16 * dm.density - size / 2f + offsetX).toInt()
+        val y = (caretScreenTop - 12 * dm.density - size / 2f + offsetY).toInt()
         mascotOverlay.show(x, y, mascotDeletingNow)
     }
 
     // ---------- helpers ----------
 
-    /** Saves copied text to the encrypted clipboard history. Skips sensitive and private content. */
+    private fun currentClip(): android.content.ClipData? = try {
+        clipManager?.primaryClip
+    } catch (e: SecurityException) {
+        null
+    }
+
+    private fun isSensitiveClip(clip: android.content.ClipData): Boolean =
+        clip.description?.extras
+            ?.getBoolean("android.content.extra.IS_SENSITIVE", false) == true
+
+    /** Saves a live copy to encrypted history. Skips sensitive and private content. */
     private fun captureClip() {
-        if (sensitive) return
-        val cm = clipManager ?: return
-        val clip: android.content.ClipData? = try {
-            cm.primaryClip
-        } catch (e: SecurityException) {
-            null
-        }
-        if (clip == null || clip.itemCount == 0) return
-        val flagged = clip.description?.extras?.getBoolean("android.content.extra.IS_SENSITIVE", false) == true
-        if (flagged) return
+        if (sensitive || !prefs.clipboardEnabled || !isInputViewShown) return
+        val clip = currentClip() ?: return
+        if (clip.itemCount == 0 || isSensitiveClip(clip)) return
         val item = clip.getItemAt(0)
         val uri = item.uri
         if (uri != null && prefs.clipboardImages) {
@@ -540,15 +551,63 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
             return
         }
         val text = item.coerceToText(this)?.toString() ?: return
-        if (text.isBlank() || text.length > 5000) return
+        if (text.isBlank() || text.length > 5000 || text == lastClipText) return
+        lastClipText = text
         ClipboardStore.get(this).add(text)
-        if (::keyboardView.isInitialized && isInputViewShown) {
-            keyboardView.showCopiedChip(text)
+        rememberClip(text)
+    }
+
+    /**
+     * When a field opens, pick up whatever was copied while the keyboard was closed.
+     * This is also what makes the "COPIED / Paste" pill reliable: it is queued here
+     * instead of only being shown at the exact moment of the copy.
+     */
+    private fun syncClipboardOnOpen() {
+        if (!::keyboardView.isInitialized) return
+        if (sensitive || !prefs.clipboardEnabled) {
+            pendingClipText = null
+            return
+        }
+        val clip = currentClip()
+        if (clip != null && clip.itemCount > 0 && !isSensitiveClip(clip)) {
+            val item = clip.getItemAt(0)
+            val uri = item.uri
+            if (uri != null && prefs.clipboardImages) {
+                if (uri.toString() != lastClipUri) captureImage(uri)
+            } else {
+                val text = item.coerceToText(this)?.toString()?.takeIf {
+                    it.isNotBlank() && it.length <= 5000
+                }
+                if (text != null && text != lastClipText) {
+                    lastClipText = text
+                    ClipboardStore.get(this).add(text)
+                    rememberClip(text)
+                }
+            }
+        }
+        val pending = pendingClipText ?: return
+        val fresh = System.currentTimeMillis() - pendingClipAt < 10 * 60 * 1000L
+        if (fresh) {
+            keyboardView.showCopiedChip(pending)
+        } else {
+            pendingClipText = null
+        }
+    }
+
+    private fun rememberClip(text: String) {
+        pendingClipText = text
+        pendingClipAt = System.currentTimeMillis()
+        lastClipText = text
+        if (::keyboardView.isInitialized) {
+            keyboardView.refreshClipboard()
+            if (isInputViewShown) keyboardView.showCopiedChip(text)
         }
     }
 
     /** Reads an image clip (max 10 MB) and stores it encrypted in the clipboard history. */
     private fun captureImage(uri: android.net.Uri) {
+        if (uri.toString() == lastClipUri) return
+        lastClipUri = uri.toString()
         Thread {
             try {
                 val bytes = contentResolver.openInputStream(uri)?.use { input ->
@@ -568,9 +627,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
                 val base64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
                 ClipboardStore.get(this).addImage(base64)
                 mainHandler.post {
-                    if (::keyboardView.isInitialized && isInputViewShown) {
-                        keyboardView.showCopiedChip("Image copied")
-                    }
+                    rememberClip("Image copied")
                 }
             } catch (e: Exception) {
                 // Ignore unreadable images.

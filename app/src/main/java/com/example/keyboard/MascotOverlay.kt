@@ -4,12 +4,16 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.graphics.RectF
+import android.os.Build
 import android.os.SystemClock
 import android.provider.Settings
 import android.view.Gravity
 import android.view.View
+import android.view.WindowInsets
 import android.view.WindowManager
+import kotlin.math.max
 import kotlin.math.sin
 
 /**
@@ -19,6 +23,7 @@ import kotlin.math.sin
  */
 class MascotOverlay(private val context: Context) {
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+    private val prefs = KeyboardPrefs(context)
     private var view: MascotView? = null
     private var params: WindowManager.LayoutParams? = null
 
@@ -26,14 +31,20 @@ class MascotOverlay(private val context: Context) {
 
     fun canShow(): Boolean = Settings.canDrawOverlays(context)
 
-    fun show(x: Int, y: Int, deleting: Boolean) {
+    fun show(rawX: Int, rawY: Int, deleting: Boolean) {
         if (!canShow()) return
+        // Keep the whole little window inside the visible area, so it never slides
+        // under the status bar, navigation bar or tablet taskbar.
+        val safe = safeBounds()
+        val x = rawX.coerceIn(safe.left, max(safe.left, safe.right - sizePx))
+        val y = rawY.coerceIn(safe.top, max(safe.top, safe.bottom - sizePx))
         val existing = view
         val existingParams = params
         if (existing != null && existingParams != null) {
             existingParams.x = x
             existingParams.y = y
             existing.deleting = deleting
+            existing.mascotColor = prefs.mascotColor
             try {
                 windowManager.updateViewLayout(existing, existingParams)
             } catch (e: Exception) {
@@ -43,6 +54,7 @@ class MascotOverlay(private val context: Context) {
         }
         val v = MascotView(context)
         v.deleting = deleting
+        v.mascotColor = prefs.mascotColor
         val lp = WindowManager.LayoutParams(
             sizePx,
             sizePx,
@@ -75,10 +87,34 @@ class MascotOverlay(private val context: Context) {
         view = null
         params = null
     }
+
+    private fun safeBounds(): Rect {
+        if (Build.VERSION.SDK_INT >= 30) {
+            val metrics = windowManager.currentWindowMetrics
+            val insets = metrics.windowInsets.getInsets(
+                WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout(),
+            )
+            val b = metrics.bounds
+            return Rect(
+                b.left + insets.left,
+                b.top + insets.top,
+                b.right - insets.right,
+                b.bottom - insets.bottom,
+            )
+        }
+        val metrics = context.resources.displayMetrics
+        val res = context.resources
+        val statusId = res.getIdentifier("status_bar_height", "dimen", "android")
+        val navId = res.getIdentifier("navigation_bar_height", "dimen", "android")
+        val status = if (statusId > 0) res.getDimensionPixelSize(statusId) else 0
+        val nav = if (navId > 0) res.getDimensionPixelSize(navId) else 0
+        return Rect(0, status, metrics.widthPixels, metrics.heightPixels - nav)
+    }
 }
 
 private class MascotView(context: Context) : View(context) {
     var deleting = false
+    var mascotColor = MascotColor.LIME
 
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -88,7 +124,6 @@ private class MascotView(context: Context) : View(context) {
     private val tmp = RectF()
 
     override fun onDraw(canvas: Canvas) {
-        val t = KeyboardTheme.Dark
         val now = SystemClock.uptimeMillis()
         val r = width * 0.19f
         val cx = width / 2f
@@ -102,8 +137,8 @@ private class MascotView(context: Context) : View(context) {
             cx = cx,
             cy = cy,
             r = r,
-            body = t.accent,
-            onBody = t.onAccent,
+            body = mascotColor.body,
+            onBody = mascotColor.ink,
             now = now,
             wave = !deleting,
             pushToX = null,

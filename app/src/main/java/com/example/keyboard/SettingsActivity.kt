@@ -81,8 +81,11 @@ class SettingsActivity : Activity() {
 
     private val bg = 0xFF0A0A0B.toInt()
     private val surface = 0xFF151518.toInt()
+    private val surfaceLow = 0xFF141417.toInt()
+    private val surfaceHigh = 0xFF232329.toInt()
     private val raised = 0xFF1F1F24.toInt()
     private val hair = 0xFF2A2A30.toInt()
+    private val outline = 0xFF2C2C33.toInt()
     private val textMain = 0xFFF2F2F5.toInt()
     private val textDim = 0xFF94949E.toInt()
     private val textFaint = 0xFF63636C.toInt()
@@ -91,6 +94,8 @@ class SettingsActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.statusBarColor = bg
+        window.navigationBarColor = bg
         stats = TypingStats(this)
         options = KeyboardPrefs(this)
 
@@ -115,8 +120,8 @@ class SettingsActivity : Activity() {
 
         val tabRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            background = roundRect(surface, 12)
-            setPadding(dp(4), dp(4), dp(4), dp(4))
+            background = roundRect(surfaceLow, 999)
+            setPadding(dp(5), dp(5), dp(5), dp(5))
             layoutParams = wideTop(dp(18))
         }
         tabKeyboard = tab("Keyboard", true)
@@ -253,7 +258,7 @@ class SettingsActivity : Activity() {
         keys.addView(switchRow("Key preview", "Bubble above the key you press", options.keyPreview) {
             options.keyPreview = it
         })
-        keys.addView(switchRow("Mascot", "A little friend who keeps the caret company", options.mascot) {
+        keys.addView(switchRow("Reo", "Your little companion who keeps the caret company", options.mascot) {
             options.mascot = it
             updateMascotChips()
         })
@@ -355,7 +360,7 @@ class SettingsActivity : Activity() {
         clip.addView(clipPreview)
         expireButton = pill(expireLabel()) { showExpireDialog() }
         clip.addView(expireButton)
-        clip.addView(pill("Clear all clipboard history") { confirmClearClipboard() })
+        clip.addView(pill("Clear all clipboard history", tonal = true) { confirmClearClipboard() })
         pane.addView(clip)
 
         // Privacy
@@ -376,6 +381,7 @@ class SettingsActivity : Activity() {
     }
 
     private lateinit var mascotPreview: MascotPreview
+    private val mascotColorDots = ArrayList<TextView>()
 
     private fun mascotPlacementRow(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
@@ -406,22 +412,67 @@ class SettingsActivity : Activity() {
             )
         }
         addView(chipRow)
+
+        addView(label("Reo's colour", 11f, textDim, true).also { it.topPad(13) })
+        val colorRow = LinearLayout(this@SettingsActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(7), 0, 0)
+        }
+        mascotColorDots.clear()
+        MascotColor.entries.forEach { color ->
+            val dot = TextView(this@SettingsActivity).apply {
+                text = "✓"
+                textSize = 13f
+                gravity = Gravity.CENTER
+                setTextColor(onLime)
+                background = roundRect(color.body, 999)
+                contentDescription = color.label
+                setOnClickListener {
+                    options.mascotColor = color
+                    updateMascotChips()
+                }
+            }
+            mascotColorDots.add(dot)
+            colorRow.addView(
+                dot,
+                LinearLayout.LayoutParams(dp(30), dp(30)).apply { marginEnd = dp(9) },
+            )
+        }
+        addView(colorRow)
+
         mascotPreview = MascotPreview(this@SettingsActivity).apply {
             accent = lime
             lane = raised
             face = onLime
             dim = textFaint
             layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(56),
-            ).apply { topMargin = dp(11) }
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(62),
+            ).apply { topMargin = dp(12) }
         }
         addView(mascotPreview)
+
+        val posValue = label("", 11f, textDim, false)
+        addView(sliderRow("Nudge up / down", posValue, -16, 16, options.mascotOffsetY) { v ->
+            options.mascotOffsetY = v
+            posValue.text = if (v == 0) "centred" else if (v < 0) "${-v} dp up" else "$v dp down"
+            updateMascotChips()
+        })
+        val sideValue = label("", 11f, textDim, false)
+        addView(sliderRow("Nudge left / right", sideValue, -16, 16, options.mascotOffsetX) { v ->
+            options.mascotOffsetX = v
+            sideValue.text = if (v == 0) "centred" else if (v < 0) "${-v} dp left" else "$v dp right"
+            updateMascotChips()
+        })
+        posValue.text = if (options.mascotOffsetY == 0) "centred" else
+            if (options.mascotOffsetY < 0) "${-options.mascotOffsetY} dp up" else "${options.mascotOffsetY} dp down"
+        sideValue.text = if (options.mascotOffsetX == 0) "centred" else
+            if (options.mascotOffsetX < 0) "${-options.mascotOffsetX} dp left" else "${options.mascotOffsetX} dp right"
         updateMascotChips()
     }
 
     private fun requestFloating(on: Boolean) {
         if (on && !Settings.canDrawOverlays(this)) {
-            AlertDialog.Builder(this)
+            AlertDialog.Builder(this, R.style.ReminoDialog)
                 .setTitle("Display over other apps")
                 .setMessage(
                     "The floating keyboard is drawn in its own window, so Remino needs this " +
@@ -450,7 +501,7 @@ class SettingsActivity : Activity() {
 
     private fun selectMascotPlacement(placement: MascotPlacement) {
         if (placement == MascotPlacement.CURSOR && !Settings.canDrawOverlays(this)) {
-            AlertDialog.Builder(this)
+            AlertDialog.Builder(this, R.style.ReminoDialog)
                 .setTitle("Display over other apps")
                 .setMessage(
                     "To sit exactly on the cursor, Remino needs permission to draw a small " +
@@ -492,9 +543,19 @@ class SettingsActivity : Activity() {
             chip.isEnabled = enabled
             chip.alpha = if (enabled) 1f else 0.45f
         }
+        val color = options.mascotColor
+        mascotColorDots.forEachIndexed { i, dot ->
+            val on = MascotColor.entries.getOrNull(i) == color
+            dot.text = if (on) "✓" else ""
+            dot.alpha = if (enabled) 1f else 0.45f
+        }
         if (::mascotPreview.isInitialized) {
             mascotPreview.placement = selected
             mascotPreview.mascotOn = enabled
+            mascotPreview.accent = color.body
+            mascotPreview.face = color.ink
+            mascotPreview.offsetX = options.mascotOffsetX
+            mascotPreview.offsetY = options.mascotOffsetY
             mascotPreview.invalidate()
         }
     }
@@ -523,7 +584,7 @@ class SettingsActivity : Activity() {
 
     private fun showToneDialog() {
         val names = arrayOf("No tone", "Light", "Medium light", "Medium", "Medium dark", "Dark")
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(this, R.style.ReminoDialog)
             .setTitle("Emoji skin tone")
             .setSingleChoiceItems(names, options.emojiTone) { dialog, which ->
                 options.emojiTone = which
@@ -565,7 +626,7 @@ class SettingsActivity : Activity() {
             checks.add(pkg to check)
             box.addView(check)
         }
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(this, R.style.ReminoDialog)
             .setTitle("Private apps")
             .setMessage("No suggestions, learning or clipboard saving in these apps.")
             .setView(listScroll)
@@ -815,17 +876,20 @@ class SettingsActivity : Activity() {
     private fun showTab(keyboard: Boolean) {
         keyboardPane.visibility = if (keyboard) View.VISIBLE else View.GONE
         activityPane.visibility = if (keyboard) View.GONE else View.VISIBLE
-        tabKeyboard.background = if (keyboard) roundRect(raised, 9) else null
-        tabActivity.background = if (!keyboard) roundRect(raised, 9) else null
-        tabKeyboard.setTextColor(if (keyboard) textMain else textDim)
-        tabActivity.setTextColor(if (!keyboard) textMain else textDim)
+        tabKeyboard.background = tabBackground(keyboard)
+        tabActivity.background = tabBackground(!keyboard)
+        tabKeyboard.setTextColor(if (keyboard) onLime else textDim)
+        tabActivity.setTextColor(if (!keyboard) onLime else textDim)
     }
 
+    private fun tabBackground(selected: Boolean) =
+        if (selected) roundRect(lime, 999) else null
+
     private fun tab(name: String, selected: Boolean): TextView =
-        label(name, 13f, if (selected) textMain else textDim, true).apply {
+        label(name, 13f, if (selected) onLime else textDim, true).apply {
             gravity = Gravity.CENTER
-            setPadding(0, dp(8), 0, dp(8))
-            background = if (selected) roundRect(raised, 9) else null
+            setPadding(0, dp(10), 0, dp(10))
+            background = tabBackground(selected)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
 
@@ -851,7 +915,7 @@ class SettingsActivity : Activity() {
             text = "Include clipboard history"
             setTextColor(textMain)
         }
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(this, R.style.ReminoDialog)
             .setTitle("Protect the backup")
             .setMessage("You will need this password to restore the backup. It cannot be recovered.")
             .setView(dialogBox(first, second, includeClip))
@@ -918,7 +982,7 @@ class SettingsActivity : Activity() {
 
     private fun showImportDialog() {
         val field = passwordField("Backup password")
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(this, R.style.ReminoDialog)
             .setTitle("Restore backup")
             .setMessage("This replaces your current settings, stats and learned words.")
             .setView(dialogBox(field))
@@ -994,7 +1058,7 @@ class SettingsActivity : Activity() {
     }
 
     private fun showExpireDialog() {
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(this, R.style.ReminoDialog)
             .setTitle("Delete unpinned items after")
             .setItems(expireNames) { _, which ->
                 options.clipboardExpireHours = expireChoices[which]
@@ -1004,7 +1068,7 @@ class SettingsActivity : Activity() {
     }
 
     private fun confirmClearClipboard() {
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(this, R.style.ReminoDialog)
             .setTitle("Clear clipboard history")
             .setMessage("This deletes every saved item, including pinned ones.")
             .setPositiveButton("Clear all") { _, _ ->
@@ -1033,12 +1097,16 @@ class SettingsActivity : Activity() {
         }
 
     private fun sectionHeader(title: String): TextView =
-        label(title, 16f, textMain, true).apply { letterSpacing = -0.02f }
+        label(title, 16f, textMain, true).apply {
+            letterSpacing = -0.01f
+            setPadding(0, 0, 0, dp(6))
+        }
 
+    /** Material 3 style filled card: big radius, tonal surface, quiet outline. */
     private fun card(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(dp(16), dp(15), dp(16), dp(15))
-        background = roundRect(surface, 18)
+        setPadding(dp(18), dp(16), dp(18), dp(16))
+        background = strokeRound(surfaceLow, outline, 24)
         layoutParams = wideTop(dp(14))
     }
 
@@ -1052,14 +1120,14 @@ class SettingsActivity : Activity() {
         setBackgroundColor(hair)
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(1),
-        ).apply { topMargin = dp(10); bottomMargin = dp(10) }
+        ).apply { topMargin = dp(12); bottomMargin = dp(12) }
     }
 
     private fun rowShell(content: LinearLayout.() -> Unit): LinearLayout =
         LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(15), dp(11), dp(15), dp(11))
+            setPadding(dp(0), dp(12), dp(0), dp(12))
             content()
         }
 
@@ -1104,25 +1172,29 @@ class SettingsActivity : Activity() {
             isChecked = checked
             thumbTintList = ColorStateList(
                 arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-                intArrayOf(lime, 0xFF8B8B94.toInt()),
+                intArrayOf(onLime, 0xFF8B8B94.toInt()),
             )
             trackTintList = ColorStateList(
                 arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-                intArrayOf(0x47C8F26A, 0xFF33333A.toInt()),
+                intArrayOf(lime, surfaceHigh),
             )
             setOnCheckedChangeListener { _, value -> onChange(value) }
         }
 
-    private fun pill(labelText: String, onClick: () -> Unit): Button = Button(this).apply {
+    private fun pill(
+        labelText: String,
+        tonal: Boolean = false,
+        onClick: () -> Unit,
+    ): Button = Button(this).apply {
         text = labelText
         isAllCaps = false
-        textSize = 13f
-        setTextColor(onLime)
-        background = roundRect(lime, 999)
+        textSize = 14f
+        setTextColor(if (tonal) lime else onLime)
+        background = if (tonal) strokeRound(0x00000000, outline, 999) else roundRect(lime, 999)
         stateListAnimator = null
         setOnClickListener { onClick() }
         layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(46),
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(48),
         ).apply { topMargin = dp(10) }
     }
 
@@ -1148,6 +1220,7 @@ class SettingsActivity : Activity() {
             this.max = max - min
             progress = initial - min
             progressTintList = ColorStateList.valueOf(lime)
+            progressBackgroundTintList = ColorStateList.valueOf(surfaceHigh)
             thumbTintList = ColorStateList.valueOf(lime)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
@@ -1339,6 +1412,8 @@ private class MascotPreview(context: Context) : View(context) {
     var dim: Int = 0
     var placement: MascotPlacement = MascotPlacement.TOOLBAR
     var mascotOn: Boolean = true
+    var offsetX: Int = 0
+    var offsetY: Int = -3
 
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -1378,19 +1453,21 @@ private class MascotPreview(context: Context) : View(context) {
             fill.color = dim
             fill.textAlign = Paint.Align.CENTER
             fill.textSize = dp(12f)
-            canvas.drawText("Mascot is off", w / 2f, centerY + dp(4f), fill)
+            canvas.drawText("Reo is off", w / 2f, centerY + dp(4f), fill)
             return
         }
 
-        val cx = if (placement == MascotPlacement.ABOVE) w * 0.5f else w * 0.42f
+        val baseX = if (placement == MascotPlacement.ABOVE) w * 0.5f else w * 0.42f
         val r = dp(9f)
+        val cx = (baseX + dp(offsetX.toFloat())).coerceIn(dp(18f), w - dp(18f))
+        val cy = (centerY + dp(offsetY.toFloat())).coerceIn(dp(16f), h - dp(16f))
         MascotArt.draw(
             canvas = canvas,
             fill = fill,
             stroke = stroke,
             tmp = tmp,
             cx = cx,
-            cy = centerY,
+            cy = cy,
             r = r,
             body = accent,
             onBody = face,
@@ -1404,7 +1481,7 @@ private class MascotPreview(context: Context) : View(context) {
         // Caret that the mascot keeps company.
         if ((now / 450L) % 2L == 0L) {
             fill.color = accent
-            tmp.set(cx + r + dp(6f), centerY - dp(8f), cx + r + dp(8f), centerY + dp(8f))
+            tmp.set(cx + r + dp(6f), cy - dp(8f), cx + r + dp(8f), cy + dp(8f))
             canvas.drawRoundRect(tmp, dp(1f), dp(1f), fill)
         }
         postInvalidateOnAnimation()

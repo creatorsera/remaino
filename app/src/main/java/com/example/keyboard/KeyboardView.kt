@@ -76,9 +76,9 @@ class KeyboardView(context: Context) : View(context) {
     )
 
     private class ClipRow(
-        val y: Float,
+        val x: Float,
+        val width: Float,
         val height: Float,
-        val header: String? = null,
         val item: ClipItem? = null,
         val hint: String? = null,
     )
@@ -104,6 +104,9 @@ class KeyboardView(context: Context) : View(context) {
     private var previewEnabled = false
     private var mascotEnabled = true
     private var placement = MascotPlacement.TOOLBAR
+    private var mascotColor = MascotColor.LIME
+    private var mascotOffsetX = 0
+    private var mascotOffsetY = -3
     private var heightScale = 1f
     private var extraBottomPad = 0
     private var fieldEmpty = true
@@ -146,6 +149,8 @@ class KeyboardView(context: Context) : View(context) {
     private var gridPointer = -1
     private var gridDownY = 0f
     private var gridLastY = 0f
+    private var gridDownX = 0f
+    private var gridLastX = 0f
     private var gridMoved = false
 
     // Emoji sheet
@@ -165,6 +170,9 @@ class KeyboardView(context: Context) : View(context) {
     private val clipStore = ClipboardStore.get(context)
     private var clipRows: List<ClipRow> = emptyList()
     private var clipHeight = 0f
+    private var clipScrollX = 0f
+    private var clipCardW = 0f
+    private val clipHeaderH = dp(38f)
 
     private val abcKey = Key("ABC", KeyType.LETTERS)
     private val panelSpaceKey = Key("", KeyType.SPACE)
@@ -189,6 +197,9 @@ class KeyboardView(context: Context) : View(context) {
     private val tmpRect = RectF()
     private val tmpRectThumb = RectF()
     private val imagePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val clipStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+    }
     private val slopRect = RectF()
 
     private var longPressCandidate: Target? = null
@@ -307,6 +318,9 @@ class KeyboardView(context: Context) : View(context) {
 
         previewEnabled = options.keyPreview
         mascotEnabled = options.mascot
+        mascotColor = options.mascotColor
+        mascotOffsetX = options.mascotOffsetX
+        mascotOffsetY = options.mascotOffsetY
         heightScale = options.keyboardHeightPercent / 100f
         extraBottomPad = options.keyboardPadding
         placement = options.mascotPlacement
@@ -358,7 +372,15 @@ class KeyboardView(context: Context) : View(context) {
         rebuildTargets()
         invalidate()
         uiHandler.removeCallbacks(clearChipRunnable)
-        uiHandler.postDelayed(clearChipRunnable, 6000L)
+        uiHandler.postDelayed(clearChipRunnable, 10_000L)
+    }
+
+    /** Rebuilds the clipboard sheet if it is open (a new item may have arrived). */
+    fun refreshClipboard() {
+        if (panel == Panel.CLIPBOARD) {
+            reloadClipboard()
+            invalidate()
+        }
     }
 
     private val clearChipRunnable = Runnable {
@@ -609,47 +631,46 @@ class KeyboardView(context: Context) : View(context) {
     // ---------- clipboard list ----------
 
     private fun openClipboard() {
+        // Clipboard history stays out of password and private fields.
+        if (sensitive) return
         panel = Panel.CLIPBOARD
         scrollY = 0f
+        clipScrollX = 0f
         rebuildTargets()
         reloadClipboard()
         invalidate()
     }
 
     private fun reloadClipboard() {
-        val items = clipStore.items()
+        val items = clipStore.items().sortedByDescending { it.pinned }
         val rows = ArrayList<ClipRow>()
-        val headerH = dp(26f)
-        val itemH = dp(76f)
-        val gapH = dp(8f)
-        val hintH = dp(70f)
-        var y = 0f
+        val gap = dp(10f)
+        val cardH = if (contentRect.height() > 0f) {
+            (contentRect.height() - clipHeaderH - dp(8f)).coerceIn(dp(96f), dp(122f))
+        } else {
+            dp(112f)
+        }
+        clipCardW = (contentRect.width() * 0.78f).coerceAtMost(dp(300f))
         if (items.isEmpty()) {
             val msg = if (clipStore.paused) "Clipboard history is paused" else "Copied text appears here"
-            rows.add(ClipRow(y, hintH, hint = msg))
-            y += hintH
+            rows.add(ClipRow(0f, contentRect.width(), cardH, hint = msg))
+            clipHeight = cardH
         } else {
-            val pinned = items.filter { it.pinned }
-            val recent = items.filter { !it.pinned }
-            if (pinned.isNotEmpty()) {
-                rows.add(ClipRow(y, headerH, header = "Pinned"))
-                y += headerH
-                for (item in pinned) {
-                    rows.add(ClipRow(y, itemH, item = item))
-                    y += itemH + gapH
-                }
+            var x = 0f
+            for (item in items) {
+                rows.add(ClipRow(x, clipCardW, cardH, item = item))
+                x += clipCardW + gap
             }
-            if (recent.isNotEmpty()) {
-                rows.add(ClipRow(y, headerH, header = "Recent"))
-                y += headerH
-                for (item in recent) {
-                    rows.add(ClipRow(y, itemH, item = item))
-                    y += itemH + gapH
-                }
-            }
+            clipHeight = cardH
         }
         clipRows = rows
-        clipHeight = y
+        clipScrollX = clipScrollX.coerceIn(0f, max(0f, totalClipWidth() - contentRect.width()))
+    }
+
+    private fun totalClipWidth(): Float {
+        if (clipRows.isEmpty()) return contentRect.width()
+        val last = clipRows.last()
+        return last.x + last.width
     }
 
     /** "just now", "12m ago", "3h ago", "2d ago". */
@@ -681,16 +702,31 @@ class KeyboardView(context: Context) : View(context) {
 
     private fun tapClip(x: Float, y: Float) {
         if (!contentRect.contains(x, y)) return
-        val local = y - contentRect.top + scrollY
-        val row = clipRows.firstOrNull { local >= it.y && local < it.y + it.height } ?: return
+        if (y < contentRect.top + clipHeaderH) {
+            // "Clear" lives in the sheet header.
+            if (x > contentRect.right - dp(90f)) {
+                clipStore.clearUnpinned()
+                clipScrollX = 0f
+                reloadClipboard()
+                invalidate()
+            }
+            return
+        }
+        val cardTop = contentRect.top + clipHeaderH + dp(4f)
+        if (y < cardTop || y > cardTop + clipHeight) return
+        val localX = x - contentRect.left + clipScrollX
+        val row = clipRows.firstOrNull { localX >= it.x && localX < it.x + it.width } ?: return
         val item = row.item ?: return
+        val cardLeft = contentRect.left + row.x - clipScrollX
+        val rx = x - cardLeft
+        val ry = y - cardTop
         Feedback.tap(this, prefs)
         when {
-            x > contentRect.right - dp(44f) -> {
+            rx < dp(34f) && ry < dp(36f) -> {
                 clipStore.remove(item)
                 reloadClipboard()
             }
-            x > contentRect.right - dp(88f) -> {
+            rx > row.width - dp(34f) && ry < dp(36f) -> {
                 clipStore.togglePin(item)
                 reloadClipboard()
             }
@@ -780,8 +816,8 @@ class KeyboardView(context: Context) : View(context) {
             canvas.drawRoundRect(tmpRect, dp(1.5f), dp(1.5f), fill)
         }
 
-        // The mascot, shoving the blinking caret back.
-        val bx = caretX + dp(23f)
+        // Reo, shoving the blinking caret back.
+        val bx = caretX + dp(23f) + dp(mascotOffsetX.toFloat())
         val idle = !moving && fieldEmpty
         val press = moving || deletingRecently()
         val walk = if (press) sin(now / 70.0).toFloat() * dp(2f) else 0f
@@ -791,10 +827,10 @@ class KeyboardView(context: Context) : View(context) {
             stroke = strokePaint,
             tmp = tmpRect,
             cx = bx,
-            cy = cy,
+            cy = cy + dp(mascotOffsetY.toFloat()),
             r = dp(11f),
-            body = t.accent,
-            onBody = t.onAccent,
+            body = mascotColor.body,
+            onBody = mascotColor.ink,
             now = now,
             wave = idle,
             pushToX = if (idle) null else caretX + dp(4f),
@@ -1012,10 +1048,11 @@ class KeyboardView(context: Context) : View(context) {
 
     private fun drawBandMascot(canvas: Canvas, t: KeyboardTheme) {
         val now = SystemClock.uptimeMillis()
-        val cx = if (caretX > 0f) caretX.coerceIn(dp(30f), width - dp(30f)) else width / 2f
+        val cx = (if (caretX > 0f) caretX.coerceIn(dp(30f), width - dp(30f)) else width / 2f) +
+            dp(mascotOffsetX.toFloat())
         val deleting = deletingRecently()
         val r = dp(10f) * if (deleting) 1.14f else 1f
-        val cy = handleH + mascotBandH / 2f
+        val cy = handleH + mascotBandH / 2f + dp(mascotOffsetY.toFloat())
         MascotArt.draw(
             canvas = canvas,
             fill = fill,
@@ -1024,8 +1061,8 @@ class KeyboardView(context: Context) : View(context) {
             cx = cx,
             cy = cy,
             r = r,
-            body = t.accent,
-            onBody = t.onAccent,
+            body = mascotColor.body,
+            onBody = mascotColor.ink,
             now = now,
             wave = !deleting,
             pushToX = null,
@@ -1034,7 +1071,7 @@ class KeyboardView(context: Context) : View(context) {
         )
         // The caret it is standing next to.
         if ((now / 450L) % 2L == 0L || deleting) {
-            fill.color = t.accent
+            fill.color = mascotColor.body
             tmpRect.set(cx + r + dp(5f), cy - dp(8f), cx + r + dp(7f), cy + dp(8f))
             canvas.drawRoundRect(tmpRect, dp(1f), dp(1f), fill)
         }
@@ -1147,66 +1184,137 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     private fun drawClipboardList(canvas: Canvas, t: KeyboardTheme) {
-        val maxScroll = max(0f, clipHeight - contentRect.height())
-        scrollY = scrollY.coerceIn(0f, maxScroll)
+        clipScrollX = clipScrollX.coerceIn(0f, max(0f, totalClipWidth() - contentRect.width()))
+        scrollY = 0f
 
         canvas.save()
         canvas.clipRect(contentRect)
+
+        // Sheet header: title on the left, a quiet "Clear" on the right.
+        val headerCy = contentRect.top + clipHeaderH / 2f
+        drawLeftLabel(canvas, "Clipboard", contentRect.left + dp(6f), headerCy, sp(13f), t.text)
+        val pinnedCount = clipRows.count { it.item?.pinned == true }
+        val clearable = clipRows.count { it.item != null && !it.item.pinned }
+        if (clearable > 0) {
+            drawLeftLabel(
+                canvas, "Clear",
+                contentRect.right - dp(80f), headerCy, sp(12f),
+                if (pinnedCount > 0) t.textDim else t.accent,
+            )
+        }
+
+        val cardTop = contentRect.top + clipHeaderH + dp(4f)
         for (row in clipRows) {
-            val top = contentRect.top + row.y - scrollY
-            if (top + row.height < contentRect.top || top > contentRect.bottom) continue
-            val header = row.header
+            val left = contentRect.left + row.x - clipScrollX
+            if (left + row.width < contentRect.left - dp(8f) || left > contentRect.right + dp(8f)) continue
             val item = row.item
             val hint = row.hint
-            if (header != null) {
-                drawLeftLabel(canvas, header, contentRect.left + dp(6f), top + row.height / 2f, sp(12f), t.textDim)
-            } else if (item != null) {
-                tmpRect.set(contentRect.left, top, contentRect.right, top + row.height - dp(8f))
+            if (item != null) {
+                tmpRect.set(left, cardTop, left + row.width, cardTop + row.height)
                 fill.color = t.card
                 canvas.drawRoundRect(tmpRect, dp(18f), dp(18f), fill)
-                var textLeft = tmpRect.left + dp(14f)
-                if (item.image != null) {
-                    val thumb = thumbnailFor(item)
-                    if (thumb != null) {
-                        val side = dp(38f)
-                        tmpRectThumb.set(
-                            tmpRect.left + dp(12f), tmpRect.centerY() - side / 2f,
-                            tmpRect.left + dp(12f) + side, tmpRect.centerY() + side / 2f,
-                        )
-                        canvas.save()
-                        path.reset()
-                        path.addRoundRect(tmpRectThumb, dp(10f), dp(10f), Path.Direction.CW)
-                        canvas.clipPath(path)
-                        canvas.drawBitmap(thumb, null, tmpRectThumb, imagePaint)
-                        canvas.restore()
-                        textLeft = tmpRectThumb.right + dp(12f)
-                    }
+                if (item.pinned) {
+                    clipStroke.color = t.accent
+                    clipStroke.strokeWidth = dp(1.5f)
+                    tmpRect.inset(dp(1f), dp(1f))
+                    canvas.drawRoundRect(tmpRect, dp(17f), dp(17f), clipStroke)
+                    tmpRect.inset(-dp(1f), -dp(1f))
                 }
-                textPaint.textSize = sp(13.5f)
-                textPaint.color = t.text
-                textPaint.textAlign = Paint.Align.LEFT
-                val maxW = tmpRect.right - dp(96f) - textLeft
-                val visible = if (item.image != null) "Image" else item.text.replace('\n', ' ')
-                val shown = TextUtils.ellipsize(visible, textPaint, maxW, TextUtils.TruncateAt.END)
-                canvas.drawText(shown, 0, shown.length, textLeft, tmpRect.top + dp(28f), textPaint)
-                textPaint.textSize = sp(10f)
-                textPaint.color = t.textDim
-                canvas.drawText(
-                    relativeTime(item.time), textLeft, tmpRect.top + dp(50f), textPaint,
-                )
-                textPaint.textAlign = Paint.Align.CENTER
+
+                // Tiny icon buttons: delete on the left, pin on the right.
+                drawIcon(canvas, R.drawable.ic_close, tmpRect.left + dp(17f), tmpRect.top + dp(18f), dp(15f), t.textDim)
                 val pinColor = if (item.pinned) t.accent else t.textDim
                 drawIcon(
                     canvas,
                     if (item.pinned) R.drawable.ic_pin_filled else R.drawable.ic_pin,
-                    tmpRect.right - dp(66f), tmpRect.centerY(), dp(20f), pinColor,
+                    tmpRect.right - dp(17f), tmpRect.top + dp(18f), dp(17f), pinColor,
                 )
-                drawIcon(canvas, R.drawable.ic_close, tmpRect.right - dp(24f), tmpRect.centerY(), dp(18f), t.textDim)
+
+                // Paste pill, bottom right.
+                val pillW = dp(58f)
+                val pillH = dp(24f)
+                tmpRectThumb.set(
+                    tmpRect.right - dp(12f) - pillW,
+                    tmpRect.bottom - dp(11f) - pillH,
+                    tmpRect.right - dp(12f),
+                    tmpRect.bottom - dp(11f),
+                )
+                fill.color = t.accent
+                canvas.drawRoundRect(tmpRectThumb, pillH / 2f, pillH / 2f, fill)
+                drawLabel(
+                    canvas, "Paste",
+                    tmpRectThumb.centerX(), tmpRectThumb.centerY(),
+                    sp(11f), t.onAccent,
+                )
+
+                // Two-line snippet, sitting under the icon row.
+                var textLeft = tmpRect.left + dp(14f)
+                val textTop = tmpRect.top + dp(30f)
+                val textRight = tmpRect.right - dp(14f)
+                if (item.image != null) {
+                    val thumb = thumbnailFor(item)
+                    if (thumb != null) {
+                        val side = dp(34f)
+                        tmpRectThumb.set(
+                            textLeft, textTop,
+                            textLeft + side, textTop + side,
+                        )
+                        canvas.save()
+                        path.reset()
+                        path.addRoundRect(tmpRectThumb, dp(9f), dp(9f), Path.Direction.CW)
+                        canvas.clipPath(path)
+                        canvas.drawBitmap(thumb, null, tmpRectThumb, imagePaint)
+                        canvas.restore()
+                        textLeft = tmpRectThumb.right + dp(9f)
+                    }
+                }
+                textPaint.textSize = sp(13f)
+                textPaint.color = t.text
+                textPaint.textAlign = Paint.Align.LEFT
+                val maxW = (textRight - textLeft).coerceAtLeast(dp(20f))
+                val visible = if (item.image != null) "Image" else item.text.replace('\n', ' ')
+                val lines = wrapTwoLines(visible, maxW)
+                var baseline = textTop - (textPaint.descent() + textPaint.ascent()) / 2f
+                for (line in lines) {
+                    canvas.drawText(line, textLeft, baseline, textPaint)
+                    baseline += textPaint.descent() - textPaint.ascent()
+                }
+
+                // Time, tucked above the Paste pill.
+                textPaint.textSize = sp(10f)
+                textPaint.color = t.textDim
+                drawLeftLabel(
+                    canvas, relativeTime(item.time),
+                    tmpRect.left + dp(14f), tmpRectThumb.centerY(),
+                    sp(10f), t.textDim,
+                )
+                textPaint.textAlign = Paint.Align.CENTER
             } else if (hint != null) {
-                drawLabel(canvas, hint, contentRect.centerX(), top + row.height / 2f, sp(14f), t.textDim)
+                drawLabel(canvas, hint, contentRect.centerX(), cardTop + row.height / 2f, sp(14f), t.textDim)
             }
         }
         canvas.restore()
+    }
+
+    /** Breaks text into at most two ellipsised lines that fit [maxWidth]. */
+    private fun wrapTwoLines(text: String, maxWidth: Float): List<String> {
+        if (text.isEmpty()) return listOf("")
+        val first = TextUtils.ellipsize(text, textPaint, maxWidth, TextUtils.TruncateAt.END).toString()
+        if (textPaint.measureText(text) <= maxWidth) return listOf(first)
+        // Find where the first line actually ends, then show the rest on line two.
+        var end = first.length
+        var consumed = 0
+        while (consumed < text.length) {
+            val next = text.indexOf(' ', consumed).let { if (it < 0) text.length else it }
+            if (textPaint.measureText(text.substring(0, next)) > maxWidth) break
+            consumed = next + 1
+            if (consumed >= text.length) return listOf(first)
+        }
+        var restStart = consumed.coerceAtMost(text.length)
+        if (restStart >= end) restStart = (end - 1).coerceAtLeast(0)
+        val rest = text.substring(restStart).trimStart()
+        if (rest.isEmpty()) return listOf(first)
+        return listOf(first, TextUtils.ellipsize(rest, textPaint, maxWidth, TextUtils.TruncateAt.END).toString())
     }
 
     private fun drawKey(canvas: Canvas, tg: Target, key: Key, t: KeyboardTheme) {
@@ -1316,6 +1424,8 @@ class KeyboardView(context: Context) : View(context) {
                     gridPointer = event.getPointerId(i)
                     gridDownY = y
                     gridLastY = y
+                    gridDownX = x
+                    gridLastX = x
                     gridMoved = false
                     return true
                 }
@@ -1359,13 +1469,26 @@ class KeyboardView(context: Context) : View(context) {
                 if (gridPointer != -1) {
                     val idx = event.findPointerIndex(gridPointer)
                     if (idx >= 0) {
+                        val x = event.getX(idx)
                         val y = event.getY(idx)
-                        if (!gridMoved && abs(y - gridDownY) > touchSlop) gridMoved = true
-                        if (gridMoved) {
-                            scrollY += gridLastY - y
-                            invalidate()
+                        if (panel == Panel.CLIPBOARD) {
+                            if (!gridMoved && abs(x - gridDownX) > touchSlop) gridMoved = true
+                            if (gridMoved) {
+                                clipScrollX -= x - gridLastX
+                                clipScrollX = clipScrollX.coerceIn(
+                                    0f, max(0f, totalClipWidth() - contentRect.width()),
+                                )
+                                invalidate()
+                            }
+                            gridLastX = x
+                        } else {
+                            if (!gridMoved && abs(y - gridDownY) > touchSlop) gridMoved = true
+                            if (gridMoved) {
+                                scrollY += gridLastY - y
+                                invalidate()
+                            }
+                            gridLastY = y
                         }
-                        gridLastY = y
                     }
                 }
             }
