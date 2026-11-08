@@ -1,6 +1,6 @@
 # Privacy
 
-Remaino keeps what you type on your phone.
+Remino keeps what you type on your phone.
 
 ## What leaves the phone
 - **Update check only.** The app has the internet permission for one thing: asking GitHub whether a newer release exists. It runs about once a week, or when you tap "Check for update". It sends no typing, clipboard or personal data.

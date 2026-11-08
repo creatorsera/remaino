@@ -41,7 +41,7 @@ object BackupCrypto {
     fun decrypt(data: ByteArray, password: CharArray): String {
         val headerLen = MAGIC.size + 4 + SALT_LEN + IV_LEN
         if (data.size <= headerLen || !data.copyOfRange(0, MAGIC.size).contentEquals(MAGIC)) {
-            throw BackupException("This is not a Remaino backup file.")
+            throw BackupException("This is not a Remino backup file.")
         }
         val iterations = ByteBuffer.wrap(data, MAGIC.size, 4).int
         if (iterations < 10_000 || iterations > 5_000_000) throw BackupException("The backup file is damaged.")
@@ -70,7 +70,7 @@ object BackupCrypto {
     }
 }
 
-/** Collects everything Remaino keeps on the device into one JSON text, and restores it. */
+/** Collects everything Remino keeps on the device into one JSON text, and restores it. */
 object BackupManager {
     fun buildJson(context: Context, includeClipboard: Boolean = false): String {
         val root = JSONObject()

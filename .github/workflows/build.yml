@@ -37,7 +37,7 @@ jobs:
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: remaino-debug-apk
+          name: remino-debug-apk
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 

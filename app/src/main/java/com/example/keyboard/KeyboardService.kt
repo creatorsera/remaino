@@ -167,6 +167,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         keyboardView.setOverlayMascot(false)
         currentInputConnection?.requestCursorUpdates(InputConnection.CURSOR_UPDATE_MONITOR)
         keyboardView.applySettings(options)
+        updateMascotOverlay()
         keyboardView.closeTray()
         keyboardView.setSensitive(sensitive)
         keyboardView.setFieldEmpty(isFieldEmpty())
@@ -482,8 +483,9 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
     override fun onUpdateCursorAnchorInfo(cursorAnchorInfo: CursorAnchorInfo?) {
         super.onUpdateCursorAnchorInfo(cursorAnchorInfo)
         val info = cursorAnchorInfo ?: return
-        val horizontal = info.insertionMarkerHorizontal
-        if (horizontal.isNaN()) return
+        if (info.insertionMarkerTop.isNaN()) return
+        // Some apps omit the horizontal marker; keep the last known x in that case.
+        val horizontal = if (info.insertionMarkerHorizontal.isNaN()) caretScreenX else info.insertionMarkerHorizontal
         val points = floatArrayOf(horizontal, info.insertionMarkerTop)
         info.matrix.mapPoints(points)
         caretScreenX = points[0]
@@ -502,10 +504,11 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
     /** Draws the mascot on the real caret when the user chose "At cursor" and allowed overlays. */
     private fun updateMascotOverlay() {
         if (!::keyboardView.isInitialized) return
+        // Decide this before layout so the band is never reserved (and then removed) on CURSOR.
         val wanted = prefs.mascot && prefs.mascotPlacement == MascotPlacement.CURSOR &&
-            mascotOverlay.canShow() && hasCaret
+            mascotOverlay.canShow()
         keyboardView.setOverlayMascot(wanted)
-        if (!wanted || !mascotVisibleNow || caretScreenTop.isNaN()) {
+        if (!wanted || !mascotVisibleNow || !hasCaret || caretScreenTop.isNaN()) {
             mascotOverlay.hide()
             return
         }

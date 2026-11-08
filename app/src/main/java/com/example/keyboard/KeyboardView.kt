@@ -103,7 +103,7 @@ class KeyboardView(context: Context) : View(context) {
     private var showNumberRow = false
     private var previewEnabled = false
     private var mascotEnabled = true
-    private var placement = MascotPlacement.ABOVE
+    private var placement = MascotPlacement.TOOLBAR
     private var heightScale = 1f
     private var extraBottomPad = 0
     private var fieldEmpty = true
@@ -299,15 +299,22 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     fun applySettings(options: KeyboardPrefs) {
+        val oldScale = heightScale
+        val oldPad = extraBottomPad
+        val oldMascot = mascotEnabled
+        val oldPlacement = placement
+        val oldNumberRow = showNumberRow
+
         previewEnabled = options.keyPreview
         mascotEnabled = options.mascot
-        placement = options.mascotPlacement
         heightScale = options.keyboardHeightPercent / 100f
         extraBottomPad = options.keyboardPadding
-        if (options.showNumberRow != showNumberRow) {
-            showNumberRow = options.showNumberRow
-            requestLayout()
-        }
+        placement = options.mascotPlacement
+        showNumberRow = options.showNumberRow
+
+        val layoutChanged = oldPlacement != placement || oldNumberRow != showNumberRow ||
+            oldScale != heightScale || oldPad != extraBottomPad || oldMascot != mascotEnabled
+        if (layoutChanged) requestLayout()
         rebuildTargets()
         invalidate()
     }
@@ -773,33 +780,27 @@ class KeyboardView(context: Context) : View(context) {
             canvas.drawRoundRect(tmpRect, dp(1.5f), dp(1.5f), fill)
         }
 
-        // The mascot, pushing it with one arm
-        val bx = caretX + dp(21f)
+        // The mascot, shoving the blinking caret back.
+        val bx = caretX + dp(23f)
         val idle = !moving && fieldEmpty
-        val bob = when {
-            moving -> sin(now / 60.0).toFloat() * dp(1.5f)
-            idle -> sin(now / 420.0).toFloat() * dp(1.2f)
-            else -> 0f
-        }
-        val by = cy + bob
-        strokePaint.color = t.inverted
-        strokePaint.strokeWidth = dp(2.5f)
-        canvas.drawLine(bx - dp(9f), by + dp(2f), caretX + dp(3f), by, strokePaint)
-        fill.color = t.inverted
-        canvas.drawCircle(bx, by, dp(11f), fill)
-        strokePaint.strokeWidth = dp(1.6f)
-        canvas.drawLine(bx, by - dp(11f), bx + dp(2f), by - dp(15f), strokePaint)
-        canvas.drawCircle(bx + dp(3.5f), by - dp(15f), dp(2.2f), fill)
-        val step = if (moving) sin(now / 70.0).toFloat() * dp(2f) else 0f
-        canvas.drawCircle(bx - dp(4f) + step, by + dp(11f), dp(2.6f), fill)
-        canvas.drawCircle(bx + dp(4f) - step, by + dp(11f), dp(2.6f), fill)
-        fill.color = t.onInverted
-        canvas.drawCircle(bx - dp(3.8f), by - dp(2f), dp(1.6f), fill)
-        canvas.drawCircle(bx + dp(3.8f), by - dp(2f), dp(1.6f), fill)
-        strokePaint.color = t.onInverted
-        strokePaint.strokeWidth = dp(1.4f)
-        tmpRect.set(bx - dp(3f), by + dp(0.5f), bx + dp(3f), by + dp(5.5f))
-        canvas.drawArc(tmpRect, 20f, 140f, false, strokePaint)
+        val press = moving || deletingRecently()
+        val walk = if (press) sin(now / 70.0).toFloat() * dp(2f) else 0f
+        MascotArt.draw(
+            canvas = canvas,
+            fill = fill,
+            stroke = strokePaint,
+            tmp = tmpRect,
+            cx = bx,
+            cy = cy,
+            r = dp(11f),
+            body = t.accent,
+            onBody = t.onAccent,
+            now = now,
+            wave = idle,
+            pushToX = if (idle) null else caretX + dp(4f),
+            deleting = press,
+            walk = walk,
+        )
     }
 
     // ---------- emoji search and sticker maker ----------
@@ -1011,28 +1012,32 @@ class KeyboardView(context: Context) : View(context) {
 
     private fun drawBandMascot(canvas: Canvas, t: KeyboardTheme) {
         val now = SystemClock.uptimeMillis()
-        val cx = if (caretX > 0f) caretX.coerceIn(dp(26f), width - dp(26f)) else width / 2f
-        val idle = fieldEmpty && !deletingRecently()
-        val bob = if (idle) sin(now / 420.0).toFloat() * dp(1.2f) else 0f
-        val scale = if (deletingRecently()) 1.15f else 1f
-        drawMascot(canvas, cx, handleH + mascotBandH / 2f + bob, scale, t)
-    }
-
-    private fun drawMascot(canvas: Canvas, cx: Float, cy: Float, scale: Float, t: KeyboardTheme) {
-        val r = dp(9f) * scale
-        fill.color = t.accent
-        canvas.drawCircle(cx, cy, r, fill)
-        fill.color = t.onAccent
-        canvas.drawCircle(cx - r * 0.34f, cy - r * 0.15f, dp(1.5f) * scale, fill)
-        canvas.drawCircle(cx + r * 0.34f, cy - r * 0.15f, dp(1.5f) * scale, fill)
-        strokePaint.color = t.onAccent
-        strokePaint.strokeWidth = dp(1.2f) * scale
-        tmpRect.set(cx - r * 0.34f, cy + r * 0.05f, cx + r * 0.34f, cy + r * 0.5f)
-        canvas.drawArc(tmpRect, 20f, 140f, false, strokePaint)
-        // small caret the mascot is pushing
-        fill.color = t.accent
-        tmpRect.set(cx + r + dp(4f), cy - dp(8f), cx + r + dp(6f), cy + dp(8f))
-        canvas.drawRoundRect(tmpRect, dp(1f), dp(1f), fill)
+        val cx = if (caretX > 0f) caretX.coerceIn(dp(30f), width - dp(30f)) else width / 2f
+        val deleting = deletingRecently()
+        val r = dp(10f) * if (deleting) 1.14f else 1f
+        val cy = handleH + mascotBandH / 2f
+        MascotArt.draw(
+            canvas = canvas,
+            fill = fill,
+            stroke = strokePaint,
+            tmp = tmpRect,
+            cx = cx,
+            cy = cy,
+            r = r,
+            body = t.accent,
+            onBody = t.onAccent,
+            now = now,
+            wave = !deleting,
+            pushToX = null,
+            deleting = deleting,
+            walk = if (deleting) sin(now / 70.0).toFloat() * dp(2f) else 0f,
+        )
+        // The caret it is standing next to.
+        if ((now / 450L) % 2L == 0L || deleting) {
+            fill.color = t.accent
+            tmpRect.set(cx + r + dp(5f), cy - dp(8f), cx + r + dp(7f), cy + dp(8f))
+            canvas.drawRoundRect(tmpRect, dp(1f), dp(1f), fill)
+        }
     }
 
     private fun drawToolbarButton(canvas: Canvas, tg: Target, action: ToolbarAction, t: KeyboardTheme) {

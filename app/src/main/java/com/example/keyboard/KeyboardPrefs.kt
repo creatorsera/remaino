@@ -12,7 +12,7 @@ enum class MascotPlacement(val key: String) {
 
     companion object {
         fun from(value: String?): MascotPlacement =
-            entries.firstOrNull { it.key == value } ?: ABOVE
+            entries.firstOrNull { it.key == value } ?: TOOLBAR
     }
 }
 
@@ -236,7 +236,7 @@ class KeyboardPrefs(context: Context) {
         }
         if (version < 2) {
             if (!prefs.contains(KEY_MASCOT_PLACEMENT)) {
-                editor.putString(KEY_MASCOT_PLACEMENT, MascotPlacement.ABOVE.key)
+                editor.putString(KEY_MASCOT_PLACEMENT, MascotPlacement.TOOLBAR.key)
             }
             if (!prefs.contains(KEY_HAPTICS)) editor.putBoolean(KEY_HAPTICS, true)
             if (!prefs.contains(KEY_CLIP_IMAGES)) editor.putBoolean(KEY_CLIP_IMAGES, true)
@@ -246,11 +246,16 @@ class KeyboardPrefs(context: Context) {
             if (!prefs.contains(KEY_AUTO_CAP)) editor.putBoolean(KEY_AUTO_CAP, true)
             if (!prefs.contains(KEY_CAP_FIRST)) editor.putBoolean(KEY_CAP_FIRST, true)
         }
+        if (version < 3) {
+            // The mascot used to sit in a band above the keys, which pushed the whole
+            // keyboard down. It now lives inside the toolbar by default.
+            editor.putString(KEY_MASCOT_PLACEMENT, MascotPlacement.TOOLBAR.key)
+        }
         editor.putInt(KEY_VERSION, PREFS_VERSION).apply()
     }
 
     private companion object {
-        const val PREFS_VERSION = 2
+        const val PREFS_VERSION = 3
         const val KEY_VERSION = "settings_version"
         const val KEY_NUMBER_ROW = "number_row"
         const val KEY_PREVIEW = "key_preview"

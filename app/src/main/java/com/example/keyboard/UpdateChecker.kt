@@ -23,7 +23,7 @@ object UpdateChecker {
                 connectTimeout = 8000
                 readTimeout = 8000
                 setRequestProperty("Accept", "application/vnd.github+json")
-                setRequestProperty("User-Agent", "Remaino-Android")
+                setRequestProperty("User-Agent", "Remino-Android")
             }
             if (connection.responseCode != 200) return null
             val body = connection.inputStream.bufferedReader().use { it.readText() }

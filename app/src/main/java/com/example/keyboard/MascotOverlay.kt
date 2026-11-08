@@ -90,17 +90,26 @@ private class MascotView(context: Context) : View(context) {
     override fun onDraw(canvas: Canvas) {
         val t = KeyboardTheme.Dark
         val now = SystemClock.uptimeMillis()
-        val r = width * 0.2f
+        val r = width * 0.19f
         val cx = width / 2f
         val cy = height / 2f
-        val wave = if (!deleting && (now / 1000L) % 5L == 0L) {
-            sin(now / 110.0).toFloat() * r * 0.35f
-        } else {
-            null
-        }
-        val walk = if (deleting) sin(now / 70.0).toFloat() * r * 0.2f else 0f
-        val bob = if (deleting) sin(now / 60.0).toFloat() * r * 0.12f else sin(now / 420.0).toFloat() * r * 0.1f
-        MascotArt.draw(canvas, fill, stroke, tmp, cx, cy + bob, r, t.accent, t.onAccent, null, wave, walk)
+        val walk = if (deleting) sin(now / 70.0).toFloat() * r * 0.18f else 0f
+        MascotArt.draw(
+            canvas = canvas,
+            fill = fill,
+            stroke = stroke,
+            tmp = tmp,
+            cx = cx,
+            cy = cy,
+            r = r,
+            body = t.accent,
+            onBody = t.onAccent,
+            now = now,
+            wave = !deleting,
+            pushToX = null,
+            deleting = deleting,
+            walk = walk,
+        )
         postInvalidateOnAnimation()
     }
 }

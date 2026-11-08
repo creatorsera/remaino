@@ -175,7 +175,7 @@ class SettingsActivity : Activity() {
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(40),
         )
-        addView(label("Remaino", 21f, textMain, true).also {
+        addView(label("Remino", 21f, textMain, true).also {
             it.letterSpacing = -0.04f
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         statusChip = label("Set up", 12f, lime, true).apply {
@@ -373,13 +373,18 @@ class SettingsActivity : Activity() {
         pane.addView(updateCard())
     }
 
+    private lateinit var mascotPreview: MascotPreview
+
     private fun mascotPlacementRow(): LinearLayout = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
+        orientation = LinearLayout.VERTICAL
         setPadding(dp(15), 0, dp(15), dp(13))
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
         )
         mascotChips.clear()
+        val chipRow = LinearLayout(this@SettingsActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
         listOf(
             MascotPlacement.TOOLBAR to "Toolbar",
             MascotPlacement.ABOVE to "Above",
@@ -390,7 +395,7 @@ class SettingsActivity : Activity() {
                 setOnClickListener { selectMascotPlacement(placement) }
             }
             mascotChips.add(chip)
-            addView(
+            chipRow.addView(
                 chip,
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -398,6 +403,17 @@ class SettingsActivity : Activity() {
                 ).apply { marginEnd = dp(7) },
             )
         }
+        addView(chipRow)
+        mascotPreview = MascotPreview(this@SettingsActivity).apply {
+            accent = lime
+            lane = raised
+            face = onLime
+            dim = textFaint
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(56),
+            ).apply { topMargin = dp(11) }
+        }
+        addView(mascotPreview)
         updateMascotChips()
     }
 
@@ -406,7 +422,7 @@ class SettingsActivity : Activity() {
             AlertDialog.Builder(this)
                 .setTitle("Display over other apps")
                 .setMessage(
-                    "The floating keyboard is drawn in its own window, so Remaino needs this " +
+                    "The floating keyboard is drawn in its own window, so Remino needs this " +
                         "permission. Without it the normal keyboard is used. Some apps hide " +
                         "overlay windows; switch this off if the keyboard does not show there. " +
                         "Drag the small bar at the top of the keyboard to move it.",
@@ -435,8 +451,8 @@ class SettingsActivity : Activity() {
             AlertDialog.Builder(this)
                 .setTitle("Display over other apps")
                 .setMessage(
-                    "To sit exactly on the cursor, Remaino needs permission to draw a small " +
-                        "overlay. Until it is granted, the mascot sits above the keys.",
+                    "To sit exactly on the cursor, Remino needs permission to draw a small " +
+                        "overlay. Until it is granted, the mascot sits in the toolbar.",
                 )
                 .setPositiveButton("Open settings") { _, _ ->
                     options.mascotPlacement = placement
@@ -448,8 +464,8 @@ class SettingsActivity : Activity() {
                         ),
                     )
                 }
-                .setNegativeButton("Use Above") { _, _ ->
-                    options.mascotPlacement = MascotPlacement.ABOVE
+                .setNegativeButton("Use Toolbar") { _, _ ->
+                    options.mascotPlacement = MascotPlacement.TOOLBAR
                     updateMascotChips()
                 }
                 .show()
@@ -473,6 +489,11 @@ class SettingsActivity : Activity() {
             }
             chip.isEnabled = enabled
             chip.alpha = if (enabled) 1f else 0.45f
+        }
+        if (::mascotPreview.isInitialized) {
+            mascotPreview.placement = selected
+            mascotPreview.mascotOn = enabled
+            mascotPreview.invalidate()
         }
     }
 
@@ -623,7 +644,7 @@ class SettingsActivity : Activity() {
                     }
                     else -> {
                         updateTitle.text = "You're up to date"
-                        updateSub.text = "Remaino v$installed"
+                        updateSub.text = "Remino v$installed"
                     }
                 }
             }
@@ -1303,4 +1324,90 @@ private class BarChart(context: Context) : View(context) {
             }
         }
     }
+}
+
+/**
+ * Small live preview under the mascot switch. Shows the companion in the chosen
+ * placement so "Toolbar / Above / At cursor" means something before typing.
+ */
+private class MascotPreview(context: Context) : View(context) {
+    var accent: Int = 0
+    var lane: Int = 0
+    var face: Int = 0
+    var dim: Int = 0
+    var placement: MascotPlacement = MascotPlacement.TOOLBAR
+    var mascotOn: Boolean = true
+
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val tmp = RectF()
+
+    private fun dp(v: Float): Float =
+        TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, resources.displayMetrics)
+
+    override fun onDraw(canvas: Canvas) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        val now = android.os.SystemClock.uptimeMillis()
+
+        val barH = dp(22f)
+        val centerY = if (placement == MascotPlacement.ABOVE) {
+            (h - barH) / 2f
+        } else {
+            h / 2f
+        }
+
+        // Keep the preview itself quiet: one soft pill, then the mascot.
+        tmp.set(dp(1f), dp(2f), w - dp(2f), h - dp(2f))
+        fill.color = lane
+        canvas.drawRoundRect(tmp, dp(14f), dp(14f), fill)
+
+        if (placement == MascotPlacement.ABOVE) {
+            // A slim strip so "above the keys" reads differently from the toolbar lane.
+            tmp.set(dp(1f), h - barH - dp(2f), w - dp(2f), h - dp(2f))
+            fill.color = withAlpha(lane, 180)
+            canvas.drawRoundRect(tmp, dp(12f), dp(12f), fill)
+        }
+
+        if (!mascotOn) {
+            fill.color = dim
+            fill.textAlign = Paint.Align.CENTER
+            fill.textSize = dp(12f)
+            canvas.drawText("Mascot is off", w / 2f, centerY + dp(4f), fill)
+            return
+        }
+
+        val cx = if (placement == MascotPlacement.ABOVE) w * 0.5f else w * 0.42f
+        val r = dp(9f)
+        MascotArt.draw(
+            canvas = canvas,
+            fill = fill,
+            stroke = stroke,
+            tmp = tmp,
+            cx = cx,
+            cy = centerY,
+            r = r,
+            body = accent,
+            onBody = face,
+            now = now,
+            wave = true,
+            pushToX = null,
+            deleting = false,
+            walk = 0f,
+        )
+
+        // Caret that the mascot keeps company.
+        if ((now / 450L) % 2L == 0L) {
+            fill.color = accent
+            tmp.set(cx + r + dp(6f), centerY - dp(8f), cx + r + dp(8f), centerY + dp(8f))
+            canvas.drawRoundRect(tmp, dp(1f), dp(1f), fill)
+        }
+        postInvalidateOnAnimation()
+    }
+
+    private fun withAlpha(color: Int, alpha: Int): Int =
+        (color and 0x00FFFFFF) or ((alpha.coerceIn(0, 255)) shl 24)
 }

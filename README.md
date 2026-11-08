@@ -1,27 +1,29 @@
-# Remaino
+# Remino
 
 A private, fast, dark-by-default Android keyboard with a rounded top toolbar. Open source.
 
-## What works in v0.1
-- Dark theme (shades of black) with a rounded top toolbar: grid icon, three suggestions, mic icon. Tap the grid icon to swap suggestions for icons
-- Wide, short keys in a four-row layout: QWERTY, shift (double-tap for caps lock), backspace with hold-to-repeat, symbols page, round `?123` pill, emoji-over-comma key, globe, space bar, period and a light round Enter bubble
-- Options in the app (all off by default except the mascot): number row, key preview bubble, mascot
-- Mascot: while you delete, the toolbar turns into a lane where a small friend pushes a blinking cursor back
-- Emoji sheet: one long scrolling sheet (Recent first, then Smileys, People, and so on) with icon tabs that jump to each section. Open it with the smile icon in the tray or by holding the emoji-over-comma key
-- Clipboard manager: copied text is saved encrypted (Android Keystore) with pinning, delete, pause and clear. Sensitive copies and private fields are skipped. Items expire after a time you choose (pinned items never do)
-- Word suggestions from a small built-in list plus the words you use most (counts only)
-- Private fields (passwords): no suggestions, no learning, no counting, no clipboard saving
-- App screen: setup steps, try box, options, clipboard settings, typing stats and encrypted backup
-- Backup: password-protected file (AES-256-GCM, PBKDF2-SHA256). Clipboard history is included only if you tick the box when exporting. A forgotten password cannot be recovered
+## What works in v0.5
+- Dark theme (shades of black) with a single lime accent and a rounded top toolbar
+- QWERTY, shift (caps-lock when nothing is selected, case cycling for a selection), backspace with hold-to-repeat and drag-up to delete a whole word, symbols page, number row, emoji-over-comma key, globe, space, period and a lime Enter bubble
+- Mascot: a small companion that lives in the toolbar, keeps the caret company when the field is empty, and pushes the caret while you delete. Placements: Toolbar (default), Above the keys, or At cursor (overlay permission). One switch turns it off
+- Emoji sheet with sections, recents, search and a global skin tone
+- Sticker maker: type text with a colour palette and send it as a styled sticker
+- Clipboard manager: copied text and images are saved encrypted (Android Keystore) with pinning, delete, pause, expiry and clear. Sensitive copies and private fields are skipped
+- Suggestions: built-in words, on-device learning, Roman Urdu words mixed into the English flow, next-word suggestions, emoji prediction and an inappropriate-word filter
+- Privacy: password/private fields and per-app sensitivity block suggestions, learning, counting and clipboard saving
+- Floating keyboard (overlay permission) and adjustable keyboard height and bottom padding
+- App screen: setup steps, try box, all options, a mascot preview, typing stats and encrypted backup
+- Backup: password-protected file (AES-256-GCM, PBKDF2-SHA256), optionally including clipboard history
+- Updates: one weekly GitHub release check, or tap "Check for updates"
 
-## Not built yet (icons show "Coming soon")
-Voice typing, themes, Urdu layout, swipe typing, autocorrect, password-manager autofill chips. GIFs are planned after v1.
+## Not built yet
+Voice typing, swipe typing, autocorrect, password-manager autofill chips, GIFs.
 
 ## Installing new builds over old ones
 Debug builds from GitHub Actions are all signed with the shared key in `app/debug.keystore`, and the version number rises with every run, so a new APK updates the old one. If you installed a build from before this change, uninstall it once (the signing key was different). Release APKs use your own key, so uninstall the debug build before installing a release build.
 
 ## Privacy
-See PRIVACY.md. No internet permission, no analytics, no accounts.
+See PRIVACY.md. The only network use is the update check; there is no analytics and no account.
 
 ## Push to GitHub
 ```
