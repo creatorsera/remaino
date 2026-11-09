@@ -550,7 +550,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         val offsetX = prefs.mascotOffsetX * dm.density
         val offsetY = prefs.mascotOffsetY * dm.density
         val x = (caretScreenX + 16 * dm.density - size / 2f + offsetX).toInt()
-        val y = (caretScreenTop - 12 * dm.density - size / 2f + offsetY).toInt()
+        val y = (caretScreenTop + 12 * dm.density - size / 2f + offsetY).toInt()
         mascotOverlay.show(x, y, mascotDeletingNow)
     }
 
