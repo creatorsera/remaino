@@ -152,7 +152,7 @@ class KeyboardPrefs(context: Context) {
     /** Hours before unpinned clipboard items are deleted. 0 means never. */
     var clipboardExpireHours: Int
         get() = prefs.getInt(KEY_CLIP_EXPIRE, 24)
-        set(value) { prefs.edit().putInt(KEY_CLIP_EXPIRE, value).apply() }
+        set(value) { prefs.edit().putInt(KEY_CLIP_EXPIRE, value.coerceIn(0, 8760)).apply() }
 
     var clipboardImages: Boolean
         get() = prefs.getBoolean(KEY_CLIP_IMAGES, true)
@@ -215,45 +215,48 @@ class KeyboardPrefs(context: Context) {
         .put("sensitivePackages", JSONArray(sensitivePackages().toList()))
 
     fun importData(json: JSONObject) {
-        if (json.has("numberRow")) showNumberRow = json.getBoolean("numberRow")
-        if (json.has("keyPreview")) keyPreview = json.getBoolean("keyPreview")
-        if (json.has("mascot")) mascot = json.getBoolean("mascot")
+        if (json.has("numberRow")) showNumberRow = json.optBoolean("numberRow")
+        if (json.has("keyPreview")) keyPreview = json.optBoolean("keyPreview")
+        if (json.has("mascot")) mascot = json.optBoolean("mascot")
         if (json.has("mascotPlacement")) {
-            mascotPlacement = MascotPlacement.from(json.getString("mascotPlacement"))
+            mascotPlacement = MascotPlacement.from(json.optString("mascotPlacement"))
         }
         if (json.has("mascotColor")) mascotColor = MascotColor.from(json.optString("mascotColor"))
         if (json.has("mascotOffsetX")) mascotOffsetX = json.optInt("mascotOffsetX", 0)
         if (json.has("mascotOffsetY")) mascotOffsetY = json.optInt("mascotOffsetY", -3)
-        if (json.has("haptics")) haptics = json.getBoolean("haptics")
-        if (json.has("sound")) sound = json.getBoolean("sound")
-        if (json.has("autoCapitalize")) autoCapitalize = json.getBoolean("autoCapitalize")
+        if (json.has("haptics")) haptics = json.optBoolean("haptics")
+        if (json.has("sound")) sound = json.optBoolean("sound")
+        if (json.has("autoCapitalize")) autoCapitalize = json.optBoolean("autoCapitalize")
         if (json.has("capitalizeFirstLetter")) {
-            capitalizeFirstLetter = json.getBoolean("capitalizeFirstLetter")
+            capitalizeFirstLetter = json.optBoolean("capitalizeFirstLetter")
         }
         if (json.has("nextWordSuggestions")) {
-            nextWordSuggestions = json.getBoolean("nextWordSuggestions")
+            nextWordSuggestions = json.optBoolean("nextWordSuggestions")
         }
-        if (json.has("emojiPrediction")) emojiPrediction = json.getBoolean("emojiPrediction")
+        if (json.has("emojiPrediction")) emojiPrediction = json.optBoolean("emojiPrediction")
         if (json.has("blockInappropriate")) {
-            blockInappropriate = json.getBoolean("blockInappropriate")
+            blockInappropriate = json.optBoolean("blockInappropriate")
         }
-        if (json.has("emojiTone")) emojiTone = json.getInt("emojiTone")
+        if (json.has("emojiTone")) emojiTone = json.optInt("emojiTone", 0)
         if (json.has("keyboardHeightPercent")) {
-            keyboardHeightPercent = json.getInt("keyboardHeightPercent")
+            keyboardHeightPercent = json.optInt("keyboardHeightPercent", 100)
         }
-        if (json.has("keyboardPadding")) keyboardPadding = json.getInt("keyboardPadding")
-        if (json.has("floatingKeyboard")) floatingKeyboard = json.getBoolean("floatingKeyboard")
-        if (json.has("clipboardEnabled")) clipboardEnabled = json.getBoolean("clipboardEnabled")
+        if (json.has("keyboardPadding")) keyboardPadding = json.optInt("keyboardPadding", 0)
+        if (json.has("floatingKeyboard")) floatingKeyboard = json.optBoolean("floatingKeyboard")
+        if (json.has("clipboardEnabled")) clipboardEnabled = json.optBoolean("clipboardEnabled")
         if (json.has("clipboardExpireHours")) {
-            clipboardExpireHours = json.getInt("clipboardExpireHours")
+            clipboardExpireHours = json.optInt("clipboardExpireHours", 24)
         }
-        if (json.has("clipboardImages")) clipboardImages = json.getBoolean("clipboardImages")
-        if (json.has("perAppSensitive")) perAppSensitive = json.getBoolean("perAppSensitive")
+        if (json.has("clipboardImages")) clipboardImages = json.optBoolean("clipboardImages")
+        if (json.has("perAppSensitive")) perAppSensitive = json.optBoolean("perAppSensitive")
         if (json.has("sensitivePackages")) {
             val arr = json.optJSONArray("sensitivePackages")
             if (arr != null) {
                 val set = HashSet<String>()
-                for (i in 0 until arr.length()) set.add(arr.optString(i))
+                for (i in 0 until minOf(arr.length(), 300)) {
+                    val pkg = arr.optString(i, "")
+                    if (pkg.isNotEmpty() && pkg.length <= 200) set.add(pkg)
+                }
                 setSensitivePackages(set)
             }
         }

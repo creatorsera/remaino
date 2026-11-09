@@ -24,6 +24,9 @@ object BackupCrypto {
     private const val IV_LEN = 12
     const val DEFAULT_ITERATIONS = 600_000
 
+    /** Enough for settings, stats and a few clipboard images, but never unbounded. */
+    const val MAX_SIZE = 24 * 1024 * 1024
+
     fun encrypt(plain: String, password: CharArray, iterations: Int = DEFAULT_ITERATIONS): ByteArray {
         val random = SecureRandom()
         val salt = ByteArray(SALT_LEN)
@@ -39,6 +42,7 @@ object BackupCrypto {
     }
 
     fun decrypt(data: ByteArray, password: CharArray): String {
+        if (data.size > MAX_SIZE) throw BackupException("This backup file is too large.")
         val headerLen = MAGIC.size + 4 + SALT_LEN + IV_LEN
         if (data.size <= headerLen || !data.copyOfRange(0, MAGIC.size).contentEquals(MAGIC)) {
             throw BackupException("This is not a Remino backup file.")
@@ -83,13 +87,34 @@ object BackupManager {
         return root.toString()
     }
 
-    fun apply(context: Context, json: String) {
+    /** Reads the plain JSON and checks every section before anything is written. */
+    fun parse(json: String): JSONObject {
+        if (json.length > BackupCrypto.MAX_SIZE) throw BackupException("This backup file is too large.")
         val root = try {
             JSONObject(json)
         } catch (e: Exception) {
             throw BackupException("The backup content is damaged.")
         }
         if (root.optInt("version", 0) != 1) throw BackupException("This backup is from a different version.")
+        if (root.optJSONObject("settings") == null && root.optJSONObject("stats") == null) {
+            throw BackupException("This backup has no Remino data in it.")
+        }
+        val checks = listOf("settings", "stats", "words")
+        for (name in checks) {
+            val value = root.opt(name) ?: continue
+            if (value !is JSONObject) throw BackupException("The backup content is damaged.")
+        }
+        for (name in listOf("emojiRecents", "clipboard")) {
+            val value = root.opt(name) ?: continue
+            if (value !is org.json.JSONArray) throw BackupException("The backup content is damaged.")
+            if (value.length() > 500) throw BackupException("The backup content is too large.")
+        }
+        return root
+    }
+
+    fun apply(context: Context, json: String) = apply(context, parse(json))
+
+    fun apply(context: Context, root: JSONObject) {
         root.optJSONObject("settings")?.let { KeyboardPrefs(context).importData(it) }
         root.optJSONObject("stats")?.let { TypingStats(context).importData(it) }
         root.optJSONObject("words")?.let { WordFrequencies.get(context).importData(it) }

@@ -447,9 +447,9 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         )
     }
 
-    override fun onStickerSend(text: String, palette: Int): Boolean {
+    override fun onStickerSend(text: String, palette: Int, style: Int): Boolean {
         return try {
-            val file = StickerMaker.save(this, StickerMaker.render(text, palette))
+            val file = StickerMaker.save(this, StickerMaker.render(text, palette, style))
             commitImage(file, "image/png")
         } catch (e: Exception) {
             Toast.makeText(this, "Could not make the sticker.", Toast.LENGTH_SHORT).show()

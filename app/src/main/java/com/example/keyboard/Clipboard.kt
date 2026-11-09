@@ -229,14 +229,17 @@ class ClipboardStore private constructor(context: Context) {
 
     private fun parse(arr: JSONArray): List<ClipItem> {
         val out = ArrayList<ClipItem>()
-        for (i in 0 until arr.length()) {
+        val count = minOf(arr.length(), MAX_ITEMS)
+        for (i in 0 until count) {
             val o: JSONObject = arr.optJSONObject(i) ?: continue
-            val text = o.optString("t", "")
+            val text = o.optString("t", "").take(MAX_TEXT)
             val image = if (o.has("i")) o.optString("i", "") else ""
-            if (image.isNotEmpty()) {
-                out.add(ClipItem(text.ifEmpty { "Image" }, o.optBoolean("p", false), o.optLong("c", 0L), image))
+            val pinned = o.optBoolean("p", false)
+            val time = o.optLong("c", 0L).coerceAtLeast(0L)
+            if (image.isNotEmpty() && image.length <= MAX_IMAGE_CHARS) {
+                out.add(ClipItem(text.ifEmpty { "Image" }, pinned, time, image))
             } else if (text.isNotEmpty()) {
-                out.add(ClipItem(text, o.optBoolean("p", false), o.optLong("c", 0L)))
+                out.add(ClipItem(text, pinned, time))
             }
         }
         return out
@@ -253,6 +256,10 @@ class ClipboardStore private constructor(context: Context) {
     }
 
     companion object {
+        private const val MAX_ITEMS = 300
+        private const val MAX_TEXT = 10_000
+        private const val MAX_IMAGE_CHARS = 15_000_000
+
         @Volatile
         private var instance: ClipboardStore? = null
 

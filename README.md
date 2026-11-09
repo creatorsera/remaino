@@ -5,14 +5,14 @@ A private, fast, dark-by-default Android keyboard with a rounded top toolbar. Op
 ## What works in v0.5
 - Dark theme (shades of black) with a single lime accent and a rounded top toolbar
 - QWERTY, shift (caps-lock when nothing is selected, case cycling for a selection), backspace with hold-to-repeat and drag-up to delete a whole word, symbols page, number row, emoji-over-comma key, globe, space, period and a lime Enter bubble
-- Mascot: a small companion that lives in the toolbar, keeps the caret company when the field is empty, and pushes the caret while you delete. Placements: Toolbar (default), Above the keys, or At cursor (overlay permission). One switch turns it off
+- Reo, the mascot: a small companion that lives in the toolbar, keeps the caret company when the field is empty, and pushes the caret while you delete. Placements: Toolbar (default), Above the keys, or At cursor (overlay permission). Eight coat colours and fine position nudges, plus one switch to turn Reo off
 - Emoji sheet with sections, recents, search and a global skin tone
-- Sticker maker: type text with a colour palette and send it as a styled sticker
-- Clipboard manager: copied text and images are saved encrypted (Android Keystore) with pinning, delete, pause, expiry and clear. Sensitive copies and private fields are skipped
+- Sticker maker: twelve colour palettes, six font/shape styles and two-line text, sent as a styled PNG sticker
+- Clipboard manager: copied text and images are saved encrypted (Android Keystore) as a horizontal card shelf with Paste, pin, delete, pause, expiry and clear. A COPIED chip on the toolbar pastes the latest clip; sensitive copies and private fields are skipped
 - Suggestions: built-in words, on-device learning, Roman Urdu words mixed into the English flow, next-word suggestions, emoji prediction and an inappropriate-word filter
 - Privacy: password/private fields and per-app sensitivity block suggestions, learning, counting and clipboard saving
 - Floating keyboard (overlay permission) and adjustable keyboard height and bottom padding
-- App screen: setup steps, try box, all options, a mascot preview, typing stats and encrypted backup
+- App screen (Material 3 styled): setup steps, try box, all options, a live Reo preview with colour and position controls, typing stats and encrypted backup
 - Backup: password-protected file (AES-256-GCM, PBKDF2-SHA256), optionally including clipboard history
 - Updates: one weekly GitHub release check, or tap "Check for updates"
 
@@ -51,10 +51,10 @@ To create the Gradle wrapper once: `gradle wrapper --gradle-version 9.6.0` and c
    `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS` (keyboard), `KEY_PASSWORD`
 5. Release:
    ```
-   git tag v0.1.0
-   git push origin v0.1.0
+   git tag v0.5.0
+   git push origin v0.5.0
    ```
-   The Release workflow attaches `remaino-v0.1.0.apk` and a checksum to a GitHub Release.
+   The Release workflow attaches `remaino-v0.5.0.apk` and a checksum to a GitHub Release.
 
 ## Rename the app
 - Change `namespace` and `applicationId` in `app/build.gradle.kts`
@@ -85,10 +85,11 @@ To create the Gradle wrapper once: `gradle wrapper --gradle-version 9.6.0` and c
 
 ## Added in this version
 - **Emoji search:** in the emoji sheet, tap the magnifier tab and type; matching emoji appear in the toolbar.
-- **Text stickers:** open the tray, tap the sticker icon, type text, pick a colour and send. It is shared as a PNG, so the app you are typing in must accept images from keyboards.
+- **Text stickers:** open the tray, tap the sticker icon, type text, pick a colour with the swatch button and a font/shape with the Aa button, then send. It is shared as a PNG, so the app you are typing in must accept images from keyboards.
+- **Clipboard shelf:** the newest clips sit side by side as cards. Tap a card to paste, use the lime Paste pill, pin with the pin icon, delete with the X, or Clear the unpinned items from the sheet header.
 - **Clipboard images:** images you copy are saved encrypted. Tap one in the clipboard to paste it (same image rule as stickers).
 - **Roman Urdu to Urdu:** type a Roman Urdu word (for example `kya` or `shukriya`) and the Urdu spelling appears as a suggestion. About 700 common words are built in. Only exact matches are offered.
 - **Floating keyboard:** turn it on in the app. It needs "Display over other apps". Drag the small bar at the top to move it. Some apps hide overlay windows; switch it off there.
-- **Mascot at the cursor:** with "At cursor" selected and the overlay permission granted, the mascot sits next to the real caret. Without the permission, or in editors that do not report the caret, it stays in the band above the keys.
+- **Reo at the cursor:** with "At cursor" selected and the overlay permission granted, Reo sits next to the real caret. Without the permission, or in editors that do not report the caret, Reo stays in the band above the keys. The colour and nudge sliders apply to every placement.
 
 Sticker and image sharing, the floating window and the cursor overlay depend on the phone and the app you type in, so test them on your own device.

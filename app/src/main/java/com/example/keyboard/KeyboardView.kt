@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.os.Handler
 import android.os.Looper
@@ -28,7 +29,7 @@ enum class ShiftState { OFF, ONE_SHOT, CAPS }
 
 enum class ToolbarAction {
     MENU, CLOSE, MIC, EMOJI, CLIPBOARD, THEME, LANGUAGE, SETTINGS, BACK, CLIP_PAUSE, CLIP_CLEAR, COPY_PASTE,
-    UNDO, REDO, STICKER, STICKER_STYLE, STICKER_SEND,
+    UNDO, REDO, STICKER, STICKER_STYLE, STICKER_FONT, STICKER_SEND,
 }
 
 /**
@@ -50,7 +51,7 @@ class KeyboardView(context: Context) : View(context) {
         fun onDeleteWord()
         fun onToolbarAction(action: ToolbarAction)
         fun onPasteImage(item: ClipItem)
-        fun onStickerSend(text: String, palette: Int): Boolean
+        fun onStickerSend(text: String, palette: Int, style: Int): Boolean
         fun onMascotState(visible: Boolean, deleting: Boolean) {}
     }
 
@@ -123,6 +124,7 @@ class KeyboardView(context: Context) : View(context) {
     private val captureText = StringBuilder()
     private var searchResults: List<String> = emptyList()
     private var stickerPalette = 0
+    private var stickerStyle = 0
 
     // Floating window and at-cursor mascot
     var floating = false
@@ -440,17 +442,24 @@ class KeyboardView(context: Context) : View(context) {
         if (captureMode != Capture.NONE) {
             targets.add(Target(leftRect, action = ToolbarAction.BACK))
             if (captureMode == Capture.STICKER) {
-                val styleCx = w - dp(68f)
-                val sendCx = w - dp(28f)
+                val styleCx = w - dp(104f)
+                val fontCx = w - dp(64f)
+                val sendCx = w - dp(24f)
                 targets.add(
                     Target(
-                        RectF(styleCx - dp(22f), cy - dp(22f), styleCx + dp(22f), cy + dp(22f)),
+                        RectF(styleCx - dp(20f), cy - dp(20f), styleCx + dp(20f), cy + dp(20f)),
                         action = ToolbarAction.STICKER_STYLE,
                     ),
                 )
                 targets.add(
                     Target(
-                        RectF(sendCx - dp(22f), cy - dp(22f), sendCx + dp(22f), cy + dp(22f)),
+                        RectF(fontCx - dp(20f), cy - dp(20f), fontCx + dp(20f), cy + dp(20f)),
+                        action = ToolbarAction.STICKER_FONT,
+                    ),
+                )
+                targets.add(
+                    Target(
+                        RectF(sendCx - dp(20f), cy - dp(20f), sendCx + dp(20f), cy + dp(20f)),
                         action = ToolbarAction.STICKER_SEND,
                     ),
                 )
@@ -873,13 +882,13 @@ class KeyboardView(context: Context) : View(context) {
     private fun sendSticker() {
         val text = captureText.toString().trim()
         if (text.isEmpty()) return
-        if (listener?.onStickerSend(text, stickerPalette) == true) exitCapture()
+        if (listener?.onStickerSend(text, stickerPalette, stickerStyle) == true) exitCapture()
     }
 
     private fun drawCapturePill(canvas: Canvas, t: KeyboardTheme, w: Float) {
         val cy = toolbarCenterY()
         val left = dp(56f)
-        val right = if (captureMode == Capture.STICKER) w - dp(100f) else left + dp(112f)
+        val right = if (captureMode == Capture.STICKER) w - dp(132f) else left + dp(112f)
         tmpRect.set(left, cy - dp(16f), right, cy + dp(16f))
         fill.color = t.key
         canvas.drawRoundRect(tmpRect, dp(16f), dp(16f), fill)
@@ -1081,11 +1090,30 @@ class KeyboardView(context: Context) : View(context) {
         val cx = tg.rect.centerX()
         val cy = tg.rect.centerY()
         if (action == ToolbarAction.STICKER_STYLE) {
-            fill.color = StickerMaker.palettes[stickerPalette].first
+            val colors = StickerMaker.palettes[stickerPalette]
+            fill.color = colors.first
             canvas.drawCircle(cx, cy, dp(13f), fill)
             strokePaint.color = t.icon
             strokePaint.strokeWidth = dp(1.5f)
             canvas.drawCircle(cx, cy, dp(16f), strokePaint)
+            textPaint.textSize = sp(11f)
+            textPaint.color = colors.second
+            textPaint.typeface = Typeface.DEFAULT_BOLD
+            val y = cy - (textPaint.descent() + textPaint.ascent()) / 2f
+            canvas.drawText("Aa", cx, y, textPaint)
+            textPaint.typeface = Typeface.DEFAULT
+            return
+        }
+        if (action == ToolbarAction.STICKER_FONT) {
+            val style = StickerMaker.styles[stickerStyle]
+            fill.color = if (isPressed(tg)) t.specialKey else t.key
+            canvas.drawCircle(cx, cy, dp(16f), fill)
+            textPaint.textSize = sp(14f)
+            textPaint.color = t.text
+            textPaint.typeface = style.typeface
+            val y = cy - (textPaint.descent() + textPaint.ascent()) / 2f
+            canvas.drawText("Aa", cx, y, textPaint)
+            textPaint.typeface = Typeface.DEFAULT
             return
         }
         if (action == ToolbarAction.STICKER_SEND) {
@@ -1122,6 +1150,7 @@ class KeyboardView(context: Context) : View(context) {
             ToolbarAction.COPY_PASTE -> R.drawable.ic_clipboard
             ToolbarAction.STICKER -> R.drawable.ic_sticker
             ToolbarAction.STICKER_STYLE -> R.drawable.ic_theme
+            ToolbarAction.STICKER_FONT -> R.drawable.ic_text
             ToolbarAction.STICKER_SEND -> R.drawable.ic_send
         }
         drawIcon(canvas, res, cx, cy, dp(24f), t.icon)
@@ -1626,6 +1655,10 @@ class KeyboardView(context: Context) : View(context) {
             ToolbarAction.STICKER -> startCapture(Capture.STICKER)
             ToolbarAction.STICKER_STYLE -> {
                 stickerPalette = (stickerPalette + 1) % StickerMaker.palettes.size
+                invalidate()
+            }
+            ToolbarAction.STICKER_FONT -> {
+                stickerStyle = (stickerStyle + 1) % StickerMaker.styles.size
                 invalidate()
             }
             ToolbarAction.STICKER_SEND -> sendSticker()

@@ -32,6 +32,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -414,31 +415,41 @@ class SettingsActivity : Activity() {
         addView(chipRow)
 
         addView(label("Reo's colour", 11f, textDim, true).also { it.topPad(13) })
-        val colorRow = LinearLayout(this@SettingsActivity).apply {
-            orientation = LinearLayout.HORIZONTAL
+        // Two rows of four, so the swatches still fit on a narrow phone.
+        val colorWrap = LinearLayout(this@SettingsActivity).apply {
+            orientation = LinearLayout.VERTICAL
             setPadding(0, dp(7), 0, 0)
         }
         mascotColorDots.clear()
-        MascotColor.entries.forEach { color ->
-            val dot = TextView(this@SettingsActivity).apply {
-                text = "✓"
-                textSize = 13f
-                gravity = Gravity.CENTER
-                setTextColor(onLime)
-                background = roundRect(color.body, 999)
-                contentDescription = color.label
-                setOnClickListener {
-                    options.mascotColor = color
-                    updateMascotChips()
-                }
+        MascotColor.entries.chunked(4).forEach { chunk ->
+            val colorRow = LinearLayout(this@SettingsActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
             }
-            mascotColorDots.add(dot)
-            colorRow.addView(
-                dot,
-                LinearLayout.LayoutParams(dp(30), dp(30)).apply { marginEnd = dp(9) },
-            )
+            chunk.forEach { color ->
+                val dot = TextView(this@SettingsActivity).apply {
+                    text = "✓"
+                    textSize = 13f
+                    gravity = Gravity.CENTER
+                    setTextColor(onLime)
+                    background = roundRect(color.body, 999)
+                    contentDescription = color.label
+                    setOnClickListener {
+                        options.mascotColor = color
+                        updateMascotChips()
+                    }
+                }
+                mascotColorDots.add(dot)
+                colorRow.addView(
+                    dot,
+                    LinearLayout.LayoutParams(dp(34), dp(34)).apply {
+                        marginEnd = dp(10)
+                        bottomMargin = dp(2)
+                    },
+                )
+            }
+            colorWrap.addView(colorRow)
         }
-        addView(colorRow)
+        addView(colorWrap)
 
         mascotPreview = MascotPreview(this@SettingsActivity).apply {
             accent = lime
@@ -731,9 +742,13 @@ class SettingsActivity : Activity() {
     private fun buildActivityPane(pane: LinearLayout) {
         val statsCard = card()
         statsCard.addView(sectionHeader("Typing"))
-        statsCard.addView(label("Since you installed", 12f, textDim, false).also {
-            it.topPad(10)
-        })
+        val installed = formatInstallDay()
+        statsCard.addView(
+            label(
+                if (installed.isEmpty()) "Since you installed" else "Since you installed · $installed",
+                12f, textDim, false,
+            ).also { it.topPad(10) },
+        )
         totalValue = label("0 words", 30f, textMain, true).also {
             it.letterSpacing = -0.03f
         }
@@ -771,10 +786,23 @@ class SettingsActivity : Activity() {
                 it.topPad(10)
             },
         )
-        statsCard.addView(pill("Reset stats") {
-            stats.reset()
-            refreshStats()
-        })
+        statsCard.addView(
+            pill("Reset stats", tonal = true) {
+                AlertDialog.Builder(this, R.style.ReminoDialog)
+                    .setTitle("Reset stats")
+                    .setMessage(
+                        "This clears words typed, the daily chart and the streak. " +
+                            "Your learned words and settings stay as they are.",
+                    )
+                    .setPositiveButton("Reset") { _, _ ->
+                        stats.reset()
+                        refreshStats()
+                        toast("Stats reset.")
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+            },
+        )
         pane.addView(statsCard)
 
         val backup = card()
@@ -860,6 +888,18 @@ class SettingsActivity : Activity() {
                 it.topPad(8)
             })
             clipPreview.addView(cardView)
+        }
+    }
+
+    private fun formatInstallDay(): String {
+        val raw = stats.installDay()
+        if (raw.isEmpty()) return ""
+        return try {
+            val inFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+            val outFormat = SimpleDateFormat("d MMM yyyy", Locale.getDefault())
+            outFormat.format(inFormat.parse(raw)!!)
+        } catch (e: Exception) {
+            ""
         }
     }
 
@@ -966,7 +1006,22 @@ class SettingsActivity : Activity() {
             }
             REQ_IMPORT -> {
                 val bytes = try {
-                    contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    contentResolver.openInputStream(uri)?.use { input ->
+                        val out = java.io.ByteArrayOutputStream()
+                        val buf = ByteArray(64 * 1024)
+                        var total = 0
+                        while (true) {
+                            val read = input.read(buf)
+                            if (read < 0) break
+                            total += read
+                            if (total > BackupCrypto.MAX_SIZE) {
+                                toast("That backup file is too large.")
+                                return
+                            }
+                            out.write(buf, 0, read)
+                        }
+                        out.toByteArray()
+                    }
                 } catch (e: Exception) {
                     null
                 }
@@ -1016,10 +1071,11 @@ class SettingsActivity : Activity() {
     private fun runImport(data: ByteArray, password: CharArray) {
         toast("Restoring backup...")
         Thread {
-            var json: String? = null
+            var root: JSONObject? = null
             var error: String? = null
             try {
-                json = BackupCrypto.decrypt(data, password)
+                // Decrypt and validate before touching the UI or any saved data.
+                root = BackupManager.parse(BackupCrypto.decrypt(data, password))
             } catch (e: BackupException) {
                 error = e.message
             } catch (e: Exception) {
@@ -1027,17 +1083,16 @@ class SettingsActivity : Activity() {
             } finally {
                 password.fill('\u0000')
             }
-            val finalJson = json
+            val finalRoot = root
             val finalError = error
             runOnUiThread {
-                if (finalJson == null) {
+                if (finalRoot == null) {
                     toast(finalError ?: "Restore failed.")
                 } else {
                     try {
-                        BackupManager.apply(this, finalJson)
-                        refreshStats()
-                        refreshClipboardPreview()
+                        BackupManager.apply(this, finalRoot)
                         toast("Backup restored.")
+                        recreate()
                     } catch (e: Exception) {
                         toast(e.message ?: "Restore failed.")
                     }

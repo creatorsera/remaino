@@ -54,7 +54,26 @@ class TypingStats(context: Context) {
     /** Index 0 is today. */
     fun lastDays(n: Int): List<Long> = (0 until n).map { prefs.getLong(DAY_PREFIX + dayKey(it), 0L) }
 
-    fun streak(): Int = StatsMath.streak(lastDays(365))
+    /**
+     * Counts consecutive active days ending today (or yesterday, while today is still
+     * quiet). Reads the stored days directly, so a streak longer than a year still works.
+     */
+    fun streak(): Int {
+        val days = HashSet<String>()
+        for ((k, v) in prefs.all) {
+            if (k.startsWith(DAY_PREFIX) && v is Long && v > 0L) days.add(k.removePrefix(DAY_PREFIX))
+        }
+        if (days.isEmpty()) return 0
+        var n = 0
+        var offset = if (days.contains(dayKey())) 0 else 1
+        while (true) {
+            if (!days.contains(dayKey(offset))) break
+            n++
+            offset++
+            if (offset > 20_000) break
+        }
+        return n
+    }
 
     fun bestDay(): Long {
         var best = 0L
@@ -74,9 +93,15 @@ class TypingStats(context: Context) {
 
     fun averagePerActiveDay(): Long = StatsMath.average(totalWords(), activeDays())
 
+    /** Clears the counters but keeps the original install date. */
     fun reset() {
-        prefs.edit().clear().apply()
+        val install = prefs.getString(KEY_INSTALL, null)
+        val editor = prefs.edit().clear()
+        if (install != null) editor.putString(KEY_INSTALL, install)
+        editor.apply()
     }
+
+    fun installDay(): String = prefs.getString(KEY_INSTALL, "").orEmpty()
 
     fun exportData(): JSONObject {
         val days = JSONObject()
@@ -92,15 +117,16 @@ class TypingStats(context: Context) {
     fun importData(json: JSONObject) {
         val editor = prefs.edit()
         editor.clear()
-        editor.putLong(KEY_TOTAL, json.optLong("total", 0L))
+        editor.putLong(KEY_TOTAL, json.optLong("total", 0L).coerceIn(0L, MAX_TOTAL))
         val install = json.optString("installDay", "")
-        if (install.isNotEmpty()) editor.putString(KEY_INSTALL, install)
+        if (install.matches(DAY_PATTERN)) editor.putString(KEY_INSTALL, install)
         val days = json.optJSONObject("days")
         if (days != null) {
             val keys = days.keys()
             while (keys.hasNext()) {
                 val k = keys.next()
-                editor.putLong(DAY_PREFIX + k, days.optLong(k, 0L))
+                if (!k.matches(DAY_PATTERN)) continue
+                editor.putLong(DAY_PREFIX + k, days.optLong(k, 0L).coerceIn(0L, MAX_DAY))
             }
         }
         editor.apply()
@@ -110,6 +136,9 @@ class TypingStats(context: Context) {
         const val DAY_PREFIX = "d_"
         const val KEY_TOTAL = "total"
         const val KEY_INSTALL = "install_day"
+        const val MAX_TOTAL = 10_000_000_000L
+        const val MAX_DAY = 5_000_000L
+        val DAY_PATTERN = Regex("\\d{4}-\\d{2}-\\d{2}")
     }
 }
 
