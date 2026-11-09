@@ -3,7 +3,7 @@
 Remino keeps what you type on your phone.
 
 ## What leaves the phone
-- **Update check only.** The app has the internet permission for one thing: asking GitHub whether a newer release exists. It runs about once a week, or when you tap "Check for update". It sends no typing, clipboard or personal data.
+- **Updates only.** The app uses the internet to ask GitHub whether a newer release exists (about once a week, or when you tap "Check for updates") and, if you choose to update, to download that release APK and its `.sha256` checksum. It sends no typing, clipboard or personal data. The update is only offered to Android's installer after the checksum, package name, version code and signing certificate are verified.
 - Nothing else uses the network. No analytics, no ads, no accounts.
 
 ## What is stored on the phone

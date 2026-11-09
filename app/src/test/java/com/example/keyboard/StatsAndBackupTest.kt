@@ -4,6 +4,7 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -79,6 +80,46 @@ class StatsAndBackupTest {
             .put("emojiRecents", JSONArray().put("🙂"))
         val parsed = BackupManager.parse(root.toString())
         assertEquals(1, parsed.getInt("version"))
+    }
+
+    @Test
+    fun updateReleaseFindsApkAndChecksum() {
+        val assets = JSONArray()
+            .put(JSONObject().put("name", "remino-v0.6.0.apk")
+                .put("size", 2_700_000L)
+                .put("browser_download_url", "https://example.test/remino.apk"))
+            .put(JSONObject().put("name", "remino-v0.6.0.apk.sha256")
+                .put("browser_download_url", "https://example.test/remino.apk.sha256"))
+        val release = UpdateChecker.parseRelease(
+            JSONObject()
+                .put("tag_name", "v0.6.0")
+                .put("name", "Remino 0.6.0")
+                .put("html_url", "https://example.test/release")
+                .put("assets", assets),
+        )
+        assertTrue(release != null)
+        assertEquals("0.6.0", release!!.tag)
+        assertEquals("https://example.test/remino.apk", release.apkUrl)
+        assertEquals("https://example.test/remino.apk.sha256", release.checksumUrl)
+        assertEquals(2_700_000L, release.apkSize)
+    }
+
+    @Test
+    fun releaseWithoutApkIsStillUsableAsAPageLink() {
+        val release = UpdateChecker.parseRelease(
+            JSONObject().put("tag_name", "v1.0.0").put("html_url", "https://example.test/r"),
+        )
+        assertTrue(release != null)
+        assertNull(release!!.apkUrl)
+        assertNull(release.checksumUrl)
+    }
+
+    @Test
+    fun versionComparisonHandlesDifferentLengths() {
+        assertTrue(UpdateChecker.isNewer("0.6.0", "0.5.0"))
+        assertTrue(UpdateChecker.isNewer("1.0", "0.9.9"))
+        assertTrue(!UpdateChecker.isNewer("0.5.0", "0.5.0"))
+        assertTrue(!UpdateChecker.isNewer("0.4.9", "0.5.0"))
     }
 
     @Test

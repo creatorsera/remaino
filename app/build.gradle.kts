@@ -12,7 +12,7 @@ android {
         targetSdk = 36
         // CI run number keeps versionCode rising so every new build can update the last one
         versionCode = maxOf(System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0, 5)
-        versionName = "0.5.0"
+        versionName = System.getenv("VERSION_NAME")?.removePrefix("v")?.takeIf { it.isNotBlank() } ?: "0.6.0"
     }
 
     // Release signing is only configured when the CI release job provides a keystore.

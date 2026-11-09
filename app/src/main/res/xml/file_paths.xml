@@ -2,4 +2,5 @@
 <paths>
     <cache-path name="stickers" path="stickers/" />
     <cache-path name="pasted" path="pasted/" />
+    <cache-path name="updates" path="updates/" />
 </paths>

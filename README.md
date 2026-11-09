@@ -2,7 +2,7 @@
 
 A private, fast, dark-by-default Android keyboard with a rounded top toolbar. Open source.
 
-## What works in v0.5
+## What works in v0.6
 - Dark theme (shades of black) with a single lime accent and a rounded top toolbar
 - QWERTY, shift (caps-lock when nothing is selected, case cycling for a selection), backspace with hold-to-repeat and drag-up to delete a whole word, symbols page, number row, emoji-over-comma key, globe, space, period and a lime Enter bubble
 - Reo, the mascot: a small companion that lives in the toolbar, keeps the caret company when the field is empty, and pushes the caret while you delete. Placements: Toolbar (default), Above the keys, or At cursor (overlay permission). Eight coat colours and fine position nudges, plus one switch to turn Reo off
@@ -14,7 +14,7 @@ A private, fast, dark-by-default Android keyboard with a rounded top toolbar. Op
 - Floating keyboard (overlay permission) and adjustable keyboard height and bottom padding
 - App screen (Material 3 styled): setup steps, try box, all options, a live Reo preview with colour and position controls, typing stats and encrypted backup
 - Backup: password-protected file (AES-256-GCM, PBKDF2-SHA256), optionally including clipboard history
-- Updates: one weekly GitHub release check, or tap "Check for updates"
+- Updates: one weekly GitHub release check (never more than once a week, or on demand), then an in-app download with SHA-256 and signing-certificate checks before Android's installer opens
 
 ## Not built yet
 Voice typing, swipe typing, autocorrect, password-manager autofill chips, GIFs.
@@ -23,7 +23,7 @@ Voice typing, swipe typing, autocorrect, password-manager autofill chips, GIFs.
 Debug builds from GitHub Actions are all signed with the shared key in `app/debug.keystore`, and the version number rises with every run, so a new APK updates the old one. If you installed a build from before this change, uninstall it once (the signing key was different). Release APKs use your own key, so uninstall the debug build before installing a release build.
 
 ## Privacy
-See PRIVACY.md. The only network use is the update check; there is no analytics and no account.
+See PRIVACY.md. The only network use is the update check and an update download you ask for; there is no analytics and no account.
 
 ## Push to GitHub
 ```
@@ -51,10 +51,10 @@ To create the Gradle wrapper once: `gradle wrapper --gradle-version 9.6.0` and c
    `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS` (keyboard), `KEY_PASSWORD`
 5. Release:
    ```
-   git tag v0.5.0
-   git push origin v0.5.0
+   git tag v0.6.0
+   git push origin v0.6.0
    ```
-   The Release workflow attaches `remaino-v0.5.0.apk` and a checksum to a GitHub Release.
+   The Release workflow sets the APK version from the tag, then attaches `remino-v0.6.0.apk` and its `.sha256` checksum to a GitHub Release. The in-app updater uses that checksum.
 
 ## Rename the app
 - Change `namespace` and `applicationId` in `app/build.gradle.kts`
@@ -90,6 +90,7 @@ To create the Gradle wrapper once: `gradle wrapper --gradle-version 9.6.0` and c
 - **Clipboard images:** images you copy are saved encrypted. Tap one in the clipboard to paste it (same image rule as stickers).
 - **Roman Urdu to Urdu:** type a Roman Urdu word (for example `kya` or `shukriya`) and the Urdu spelling appears as a suggestion. About 700 common words are built in. Only exact matches are offered.
 - **Floating keyboard:** turn it on in the app. It needs "Display over other apps". Drag the small bar at the top to move it. Some apps hide overlay windows; switch it off there.
+- **In-app updates:** when a newer release exists, tap the update card. Remino downloads the APK, checks the release SHA-256, the package name, the version code and the signing certificate, then opens Android's installer. If the installed build uses a different signing key (for example a debug build), the app explains why Android cannot replace it instead of failing silently.
 - **Reo at the cursor:** with "At cursor" selected and the overlay permission granted, Reo sits next to the real caret. Without the permission, or in editors that do not report the caret, Reo stays in the band above the keys. The colour and nudge sliders apply to every placement.
 
 Sticker and image sharing, the floating window and the cursor overlay depend on the phone and the app you type in, so test them on your own device.
