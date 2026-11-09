@@ -328,6 +328,23 @@ class SettingsActivity : Activity() {
             ) { options.blockInappropriate = it },
         )
         typing.addView(emojiToneRow())
+        typing.addView(
+            label(
+                "Long-press a suggestion on the keyboard to remove it.",
+                11f, textFaint, false,
+            ).also { it.topPad(12) },
+        )
+        typing.addView(
+            pill("Restore hidden suggestions", tonal = true) {
+                val hidden = HiddenWords(this)
+                if (hidden.count() == 0) {
+                    toast("No hidden suggestions.")
+                } else {
+                    hidden.clear()
+                    toast("Hidden suggestions restored.")
+                }
+            },
+        )
         pane.addView(typing)
 
         // Size

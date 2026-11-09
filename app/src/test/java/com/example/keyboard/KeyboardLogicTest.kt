@@ -29,6 +29,48 @@ class SuggestionEngineTest {
     fun exactWordIsNotSuggestedAgain() {
         assertFalse(engine.suggest("hello").contains("hello"))
     }
+
+    @Test
+    fun hiddenWordsAreNotSuggested() {
+        assertFalse(engine.suggest("hel", hidden = setOf("help")).contains("help"))
+    }
+
+    @Test
+    fun hiddenDefaultsAreSkipped() {
+        assertFalse(engine.suggest("", hidden = setOf("the")).contains("the"))
+    }
+}
+
+class EditingTest {
+    @Test
+    fun trailingWordPlusSpaceIsRemovedTogether() {
+        assertEquals(6, Editing.trailingTokenLength("hello world "))
+    }
+
+    @Test
+    fun trailingWordWithoutSpaceStillCounts() {
+        assertEquals(5, Editing.trailingTokenLength("hello world"))
+    }
+
+    @Test
+    fun multipleSpacesAreIncluded() {
+        assertEquals(7, Editing.trailingTokenLength("hello  "))
+    }
+
+    @Test
+    fun newlinesAreIncluded() {
+        assertEquals(6, Editing.trailingTokenLength("hello\n"))
+    }
+
+    @Test
+    fun emptyTextHasNothingToRemove() {
+        assertEquals(0, Editing.trailingTokenLength(""))
+    }
+
+    @Test
+    fun whitespaceOnlyTextCountsAsTrailingSpace() {
+        assertEquals(3, Editing.trailingTokenLength("   "))
+    }
 }
 
 class StatsMathTest {

@@ -168,6 +168,12 @@ class WordFrequencies private constructor(context: Context) {
         prefs.edit().putInt(w, next).apply()
     }
 
+    /** Forgets one word, used when a suggestion is removed by long-pressing it. */
+    fun forget(word: String) {
+        val w = word.trim().lowercase()
+        if (counts.remove(w) != null) prefs.edit().remove(w).apply()
+    }
+
     fun clear() {
         counts.clear()
         prefs.edit().clear().apply()

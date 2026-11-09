@@ -1,25 +1,36 @@
 package com.example.keyboard
 
 /**
- * Tiny prefix-based suggestion engine. It combines the words you use most (counts only)
- * with a small built-in list. A real dictionary and autocorrect come in a later version.
+ * Prefix-based suggestion engine. It combines the words you use most (counts only)
+ * with the built-in frequency-ordered English dictionary. The dictionary lives in
+ * assets/english_words.txt so it can be much larger than a hand-written list.
  */
 class SuggestionEngine(private val builtIn: List<String> = COMMON_WORDS) {
 
-    fun suggest(prefix: String, personal: Map<String, Int> = emptyMap(), limit: Int = 3): List<String> {
+    fun suggest(
+        prefix: String,
+        personal: Map<String, Int> = emptyMap(),
+        limit: Int = 3,
+        hidden: Set<String> = emptySet(),
+    ): List<String> {
         val p = prefix.lowercase()
-        if (p.isEmpty()) return DEFAULTS.take(limit)
+        if (p.isEmpty()) {
+            return DEFAULTS.filterNot { it.lowercase() in hidden }.take(limit)
+        }
         val fromPersonal = personal.entries
-            .filter { it.key.startsWith(p) && it.key != p }
+            .asSequence()
+            .filter { it.key.startsWith(p) && it.key != p && it.key !in hidden }
             .sortedByDescending { it.value }
             .map { it.key }
-        val fromBuiltIn = builtIn.filter { it.startsWith(p) && it != p }
-        return (fromPersonal + fromBuiltIn).distinct().take(limit)
+        val fromBuiltIn = builtIn.asSequence()
+            .filter { it.startsWith(p) && it != p && it !in hidden }
+        return (fromPersonal + fromBuiltIn).distinct().take(limit).toList()
     }
 
     companion object {
         val DEFAULTS = listOf("I", "the", "and")
 
+        /** Fallback list if the asset cannot be read (also used by unit tests). */
         val COMMON_WORDS = listOf(
             "the", "to", "of", "and", "in", "that", "have", "it", "for", "not", "on", "with", "he", "as",
             "you", "do", "at", "this", "but", "his", "by", "from", "they", "we", "say", "her", "she", "or",

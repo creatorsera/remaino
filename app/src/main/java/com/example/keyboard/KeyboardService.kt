@@ -31,7 +31,8 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
     private lateinit var stats: TypingStats
     private lateinit var wordFreq: WordFrequencies
     private lateinit var bigrams: Bigrams
-    private val engine = SuggestionEngine()
+    private lateinit var hiddenWords: HiddenWords
+    private val engine by lazy { SuggestionEngine(EnglishWords.load(this)) }
     private val composing = StringBuilder()
 
     /** Word-level undo/redo. Each entry is a committed word (with its trailing space). */
@@ -69,6 +70,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         stats = TypingStats(this)
         wordFreq = WordFrequencies.get(this)
         bigrams = Bigrams(this)
+        hiddenWords = HiddenWords(this)
         prefs = KeyboardPrefs(this)
         floatingHost = FloatingHost(this, prefs)
         mascotOverlay = MascotOverlay(this)
@@ -246,6 +248,9 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
     override fun onText(text: String) {
         val ic = currentInputConnection ?: return
         val ch = text.firstOrNull() ?: return
+        // Typing always hides Reo and any "paste this" pill.
+        keyboardView.dismissCopiedChip()
+        keyboardView.setFieldEmpty(false)
         if (useComposing && (ch.isLetter() || (ch == '\'' && composing.isNotEmpty()))) {
             composing.append(text)
             ic.setComposingText(composing.toString(), 1)
@@ -297,6 +302,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
 
     override fun onBackspace() {
         val ic = currentInputConnection ?: return
+        keyboardView.dismissCopiedChip()
         if (composing.isNotEmpty()) {
             composing.setLength(composing.length - 1)
             if (composing.isEmpty()) {
@@ -313,6 +319,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
 
     override fun onSpace() {
         val ic = currentInputConnection ?: return
+        keyboardView.dismissCopiedChip()
         finishWord()
         val before = ic.getTextBeforeCursor(2, 0)
         val doubleSpace = useComposing && before != null && before.length == 2 &&
@@ -336,6 +343,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
 
     override fun onEnter() {
         val ic = currentInputConnection ?: return
+        keyboardView.dismissCopiedChip()
         finishWord()
         if (enterIsAction) {
             ic.performEditorAction(enterAction)
@@ -349,6 +357,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
 
     override fun onSuggestion(word: String) {
         val ic = currentInputConnection ?: return
+        keyboardView.dismissCopiedChip()
         if (word.isNotEmpty() && word.none { it.isLetterOrDigit() }) {
             // Emoji chip: insert as an emoji, not as a word with a trailing space.
             composing.setLength(0)
@@ -373,14 +382,31 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
 
     override fun onEmoji(emoji: String) {
         val ic = currentInputConnection ?: return
+        keyboardView.dismissCopiedChip()
         finishWord()
         ic.commitText(EmojiData.withTone(emoji, prefs.emojiTone), 1)
         keyboardView.setFieldEmpty(false)
         refreshSuggestions()
     }
 
+    /** Long-press on a suggestion chip: remove it and remember that choice. */
+    override fun onSuggestionLongPress(word: String) {
+        if (sensitive) return
+        val clean = word.trim()
+        if (clean.length < 1 || clean.none { it.isLetter() }) return
+        if (!hiddenWords.hide(clean)) return
+        wordFreq.forget(clean)
+        Toast.makeText(
+            this,
+            "Removed \"$clean\" from suggestions",
+            Toast.LENGTH_SHORT,
+        ).show()
+        refreshSuggestions()
+    }
+
     override fun onPaste(text: String) {
         val ic = currentInputConnection ?: return
+        keyboardView.dismissCopiedChip()
         finishWord()
         ic.commitText(text, 1)
         keyboardView.setFieldEmpty(false)
@@ -397,6 +423,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
 
     override fun onDeleteWord() {
         val ic = currentInputConnection ?: return
+        keyboardView.dismissCopiedChip()
         finishWord()
         val before = ic.getTextBeforeCursor(60, 0)?.toString() ?: return
         if (before.isEmpty()) return
@@ -658,32 +685,46 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         }
     }
 
-    /** Deletes the last committed word (and its trailing space) and remembers it for redo. */
+    /**
+     * Deletes the last committed word (and any trailing space) and remembers the
+     * exact removed text for redo. If the history was lost, it still removes the
+     * word before the cursor instead of doing nothing.
+     */
     private fun undoWord() {
         val ic = currentInputConnection ?: return
+        keyboardView.dismissCopiedChip()
         if (composing.isNotEmpty()) {
             composing.setLength(0)
             ic.finishComposingText()
         }
-        val word = undoStack.removeLastOrNull() ?: return
-        val before = ic.getTextBeforeCursor(word.length + 1, 0)?.toString()
-        if (before == "$word ") {
-            ic.deleteSurroundingText(word.length + 1, 0)
-        } else {
-            ic.deleteSurroundingText(word.length, 0)
+        val before = ic.getTextBeforeCursor(160, 0)?.toString().orEmpty()
+        if (before.isEmpty()) return
+        val word = undoStack.removeLastOrNull()
+        val delete = when {
+            word != null && before.endsWith("$word ", ignoreCase = true) -> word.length + 1
+            word != null && before.endsWith(word, ignoreCase = true) -> word.length
+            else -> Editing.trailingTokenLength(before)
         }
-        redoStack.addLast(word)
-        lastWord = if (undoStack.isEmpty()) "" else undoStack.last().trim().lowercase()
+        if (delete <= 0) return
+        val removed = before.takeLast(delete)
+        ic.deleteSurroundingText(delete, 0)
+        redoStack.addLast(removed)
+        lastWord = undoStack.lastOrNull()?.trim()?.lowercase().orEmpty()
         keyboardView.setFieldEmpty(isFieldEmpty())
         refreshSuggestions()
     }
 
     private fun redoWord() {
         val ic = currentInputConnection ?: return
-        val word = redoStack.removeLastOrNull() ?: return
-        ic.commitText("$word ", 1)
-        undoStack.addLast(word)
-        lastWord = word.trim().lowercase()
+        val text = redoStack.removeLastOrNull() ?: return
+        ic.commitText(text, 1)
+        val word = text.trim().lowercase()
+        if (word.isNotEmpty()) {
+            undoStack.addLast(word)
+            if (undoStack.size > MAX_UNDO) undoStack.removeFirst()
+        }
+        lastWord = word
+        keyboardView.dismissCopiedChip()
         keyboardView.setFieldEmpty(false)
         refreshSuggestions()
     }
@@ -695,9 +736,11 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
             return
         }
         val typed = composing.toString()
+        keyboardView.setComposing(typed.isNotEmpty())
+        val hidden = hiddenWords.snapshot()
         val list = if (typed.isEmpty()) {
             val next = if (prefs.nextWordSuggestions && lastWord.isNotEmpty()) {
-                bigrams.followers(lastWord, 2)
+                bigrams.followers(lastWord, 2).filterNot { it in hidden }
             } else {
                 emptyList()
             }
@@ -706,13 +749,16 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
             } else {
                 null
             }
-            val base = SuggestionEngine.DEFAULTS
+            val base = SuggestionEngine.DEFAULTS.filterNot { it.lowercase() in hidden }
             val merged = (next + listOfNotNull(emoji) + base)
                 .distinct()
             if (prefs.blockInappropriate) SuggestionFilter.clean(merged) else merged
         } else {
-            val english = engine.suggest(typed, wordFreq.snapshot(), 2)
-            val completions = (english + RomanUrdu.complete(typed, 2)).distinct().take(2)
+            val english = engine.suggest(typed, wordFreq.snapshot(), 2, hidden)
+            val completions = (english + RomanUrdu.complete(typed, 2))
+                .filterNot { it in hidden }
+                .distinct()
+                .take(2)
             val urdu = RomanUrdu.lookup(typed)
             val raw = if (urdu != null) {
                 listOf(typed) + completions.take(1) + urdu

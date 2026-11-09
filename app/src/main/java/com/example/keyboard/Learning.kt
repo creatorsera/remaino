@@ -101,6 +101,52 @@ object EmojiPredict {
     }
 }
 
+/**
+ * Suggestions the user asked to forget (long-press a suggestion on the keyboard).
+ * Kept separately from learned words so a dictionary word can be hidden too.
+ */
+class HiddenWords(context: Context) {
+    private val prefs = context.applicationContext
+        .getSharedPreferences("hidden_suggestions", Context.MODE_PRIVATE)
+    private val words = HashSet<String>()
+
+    init {
+        words.addAll(prefs.getStringSet(KEY_LIST, emptySet()).orEmpty())
+    }
+
+    fun hide(word: String): Boolean {
+        val w = clean(word)
+        if (w.isEmpty()) return false
+        if (words.size >= MAX && !words.contains(w)) return false
+        if (!words.add(w)) return false
+        prefs.edit().putStringSet(KEY_LIST, HashSet(words)).apply()
+        return true
+    }
+
+    fun contains(word: String): Boolean = words.contains(clean(word))
+
+    fun count(): Int = words.size
+
+    /** Read-only copy for the suggestion engine. */
+    fun snapshot(): Set<String> = HashSet(words)
+
+    fun clear() {
+        words.clear()
+        prefs.edit().remove(KEY_LIST).apply()
+    }
+
+    private fun clean(word: String): String {
+        val w = word.trim().lowercase().trim('.', ',', '!', '?', '\'', '"')
+        if (w.length < 1 || w.length > 24) return ""
+        return if (w.all { it.isLetter() || it == '\'' }) w else ""
+    }
+
+    private companion object {
+        const val KEY_LIST = "words"
+        const val MAX = 1000
+    }
+}
+
 /** A small, deliberately blunt blocklist for the suggestion bar. */
 object SuggestionFilter {
     private val blocked = setOf(

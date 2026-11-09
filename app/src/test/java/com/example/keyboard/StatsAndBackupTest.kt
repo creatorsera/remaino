@@ -4,6 +4,7 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -128,4 +129,26 @@ class StatsAndBackupTest {
         assertTrue(StickerMaker.styles.size >= 5)
         assertEquals(StickerMaker.palettes.size, StickerMaker.paletteNames.size)
     }
+    @Test
+    fun englishDictionaryHasLongCommonWords() {
+        val words = EnglishWords.load(RuntimeEnvironment.getApplication())
+        assertTrue(words.size >= 5_000)
+        assertTrue(words.contains("keyboard"))
+        assertTrue(words.contains("because"))
+        assertTrue(words.contains("information"))
+    }
+
+    @Test
+    fun hiddenSuggestionSurvivesANewInstance() {
+        val context = RuntimeEnvironment.getApplication()
+        val hidden = HiddenWords(context)
+        hidden.clear()
+        assertTrue(hidden.hide("hello"))
+        assertFalse(HiddenWords(context).hide("hello"))
+        assertTrue(HiddenWords(context).contains("hello"))
+        assertEquals(1, HiddenWords(context).count())
+        hidden.clear()
+        assertEquals(0, HiddenWords(context).count())
+    }
+
 }

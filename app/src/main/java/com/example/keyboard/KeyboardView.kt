@@ -44,6 +44,7 @@ class KeyboardView(context: Context) : View(context) {
         fun onSpace()
         fun onEnter()
         fun onSuggestion(word: String)
+        fun onSuggestionLongPress(word: String) {}
         fun onEmoji(emoji: String)
         fun onPaste(text: String)
         fun onGlobe()
@@ -116,6 +117,7 @@ class KeyboardView(context: Context) : View(context) {
     private var copiedAt = 0L
     private val prefs = KeyboardPrefs(context)
     private var suggestions: List<String> = emptyList()
+    private var composingActive = false
     private var navInset = 0
     private var lastShiftTap = 0L
 
@@ -211,7 +213,11 @@ class KeyboardView(context: Context) : View(context) {
         if (tg != null && pressedByPointer.values.any { it === tg }) {
             longPressFired = tg
             Feedback.longPress(this, prefs)
-            handleAction(ToolbarAction.EMOJI)
+            if (tg.suggestionIndex >= 0) {
+                suggestions.getOrNull(tg.suggestionIndex)?.let { listener?.onSuggestionLongPress(it) }
+            } else {
+                handleAction(ToolbarAction.EMOJI)
+            }
         }
     }
 
@@ -391,9 +397,23 @@ class KeyboardView(context: Context) : View(context) {
         invalidate()
     }
 
+    /** Hides the "COPIED / Paste" pill as soon as the user starts typing. */
+    fun dismissCopiedChip() {
+        if (copiedChip == null) return
+        copiedChip = null
+        uiHandler.removeCallbacks(clearChipRunnable)
+        rebuildTargets()
+        invalidate()
+    }
+
     fun setSuggestions(list: List<String>) {
         suggestions = list
         invalidate()
+    }
+
+    /** True while the user is in the middle of a word, so chip 0 is the typed text. */
+    fun setComposing(active: Boolean) {
+        composingActive = active
     }
 
     fun setSensitive(value: Boolean) {
@@ -653,13 +673,13 @@ class KeyboardView(context: Context) : View(context) {
     private fun reloadClipboard() {
         val items = clipStore.items().sortedByDescending { it.pinned }
         val rows = ArrayList<ClipRow>()
-        val gap = dp(10f)
+        val gap = dp(8f)
         val cardH = if (contentRect.height() > 0f) {
-            (contentRect.height() - clipHeaderH - dp(8f)).coerceIn(dp(96f), dp(122f))
+            (contentRect.height() - clipHeaderH - dp(8f)).coerceIn(dp(90f), dp(104f))
         } else {
-            dp(112f)
+            dp(96f)
         }
-        clipCardW = (contentRect.width() * 0.78f).coerceAtMost(dp(300f))
+        clipCardW = (contentRect.width() * 0.66f).coerceAtMost(dp(220f))
         if (items.isEmpty()) {
             val msg = if (clipStore.paused) "Clipboard history is paused" else "Copied text appears here"
             rows.add(ClipRow(0f, contentRect.width(), cardH, hint = msg))
@@ -798,7 +818,7 @@ class KeyboardView(context: Context) : View(context) {
      */
     private fun mascotVisible(): Boolean =
         mascotEnabled && !trayOpen && panel == Panel.KEYS && captureMode == Capture.NONE &&
-            (fieldEmpty || deletingRecently())
+            copiedChip == null && (fieldEmpty || deletingRecently())
 
     private fun laneVisible(): Boolean =
         mascotVisible() && placement == MascotPlacement.TOOLBAR
@@ -985,7 +1005,9 @@ class KeyboardView(context: Context) : View(context) {
                 tg.suggestionIndex >= 0 -> if (!lane) drawChip(canvas, tg, t)
                 tg.resultIndex >= 0 -> drawResult(canvas, tg, t)
                 tg.tabIndex >= 0 -> drawTab(canvas, tg, t)
-                action != null -> drawToolbarButton(canvas, tg, action, t)
+                action != null -> if (action != ToolbarAction.COPY_PASTE) {
+                    drawToolbarButton(canvas, tg, action, t)
+                }
                 key != null -> drawKey(canvas, tg, key, t)
             }
         }
@@ -1241,45 +1263,46 @@ class KeyboardView(context: Context) : View(context) {
             if (item != null) {
                 tmpRect.set(left, cardTop, left + row.width, cardTop + row.height)
                 fill.color = t.card
-                canvas.drawRoundRect(tmpRect, dp(18f), dp(18f), fill)
+                canvas.drawRoundRect(tmpRect, dp(16f), dp(16f), fill)
                 if (item.pinned) {
                     clipStroke.color = t.accent
                     clipStroke.strokeWidth = dp(1.5f)
                     tmpRect.inset(dp(1f), dp(1f))
-                    canvas.drawRoundRect(tmpRect, dp(17f), dp(17f), clipStroke)
+                    canvas.drawRoundRect(tmpRect, dp(15f), dp(15f), clipStroke)
                     tmpRect.inset(-dp(1f), -dp(1f))
                 }
 
                 // Tiny icon buttons: delete on the left, pin on the right.
-                drawIcon(canvas, R.drawable.ic_close, tmpRect.left + dp(17f), tmpRect.top + dp(18f), dp(15f), t.textDim)
+                drawIcon(canvas, R.drawable.ic_close, tmpRect.left + dp(16f), tmpRect.top + dp(16f), dp(14f), t.textDim)
                 val pinColor = if (item.pinned) t.accent else t.textDim
                 drawIcon(
                     canvas,
                     if (item.pinned) R.drawable.ic_pin_filled else R.drawable.ic_pin,
-                    tmpRect.right - dp(17f), tmpRect.top + dp(18f), dp(17f), pinColor,
+                    tmpRect.right - dp(16f), tmpRect.top + dp(16f), dp(16f), pinColor,
                 )
 
                 // Paste pill, bottom right.
-                val pillW = dp(58f)
-                val pillH = dp(24f)
+                val pillW = dp(52f)
+                val pillH = dp(22f)
                 tmpRectThumb.set(
-                    tmpRect.right - dp(12f) - pillW,
-                    tmpRect.bottom - dp(11f) - pillH,
-                    tmpRect.right - dp(12f),
-                    tmpRect.bottom - dp(11f),
+                    tmpRect.right - dp(10f) - pillW,
+                    tmpRect.bottom - dp(9f) - pillH,
+                    tmpRect.right - dp(10f),
+                    tmpRect.bottom - dp(9f),
                 )
                 fill.color = t.accent
                 canvas.drawRoundRect(tmpRectThumb, pillH / 2f, pillH / 2f, fill)
+                val pillCy = tmpRectThumb.centerY()
                 drawLabel(
                     canvas, "Paste",
                     tmpRectThumb.centerX(), tmpRectThumb.centerY(),
-                    sp(11f), t.onAccent,
+                    sp(10.5f), t.onAccent,
                 )
 
                 // Two-line snippet, sitting under the icon row.
-                var textLeft = tmpRect.left + dp(14f)
+                var textLeft = tmpRect.left + dp(12f)
                 val textTop = tmpRect.top + dp(30f)
-                val textRight = tmpRect.right - dp(14f)
+                val textRight = tmpRect.right - dp(12f)
                 if (item.image != null) {
                     val thumb = thumbnailFor(item)
                     if (thumb != null) {
@@ -1297,7 +1320,7 @@ class KeyboardView(context: Context) : View(context) {
                         textLeft = tmpRectThumb.right + dp(9f)
                     }
                 }
-                textPaint.textSize = sp(13f)
+                textPaint.textSize = sp(12.5f)
                 textPaint.color = t.text
                 textPaint.textAlign = Paint.Align.LEFT
                 val maxW = (textRight - textLeft).coerceAtLeast(dp(20f))
@@ -1310,12 +1333,12 @@ class KeyboardView(context: Context) : View(context) {
                 }
 
                 // Time, tucked above the Paste pill.
-                textPaint.textSize = sp(10f)
+                textPaint.textSize = sp(9.5f)
                 textPaint.color = t.textDim
                 drawLeftLabel(
                     canvas, relativeTime(item.time),
-                    tmpRect.left + dp(14f), tmpRectThumb.centerY(),
-                    sp(10f), t.textDim,
+                    tmpRect.left + dp(12f), pillCy,
+                    sp(9.5f), t.textDim,
                 )
                 textPaint.textAlign = Paint.Align.CENTER
             } else if (hint != null) {
@@ -1473,6 +1496,13 @@ class KeyboardView(context: Context) : View(context) {
                         longPressCandidate = tg
                         longPressFired = null
                         uiHandler.postDelayed(longPressRunnable, 400L)
+                    } else if (tg.suggestionIndex >= 0 &&
+                        suggestions.getOrNull(tg.suggestionIndex) != null &&
+                        !(composingActive && tg.suggestionIndex == 0)
+                    ) {
+                        longPressCandidate = tg
+                        longPressFired = null
+                        uiHandler.postDelayed(longPressRunnable, 400L)
                     }
                     invalidate()
                 }
@@ -1551,7 +1581,9 @@ class KeyboardView(context: Context) : View(context) {
                     } else if (down === longPressFired) {
                         longPressFired = null
                     } else {
-                        if (type == KeyType.COMMA_EMOJI) uiHandler.removeCallbacks(longPressRunnable)
+                        if (type == KeyType.COMMA_EMOJI || down.suggestionIndex >= 0) {
+                            uiHandler.removeCallbacks(longPressRunnable)
+                        }
                         val slop = dp(10f)
                         slopRect.set(down.rect)
                         slopRect.inset(-slop, -slop)

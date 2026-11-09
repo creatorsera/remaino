@@ -8,7 +8,11 @@
         android:fillColor="#00000000"
         android:pathData="M47,64 L47,44.5 L55.5,44.5 A6.8,6.8 0 0 1 55.5,56 L47,56 M53.5,56 L63,64"
         android:strokeColor="#FFFFFF"
-        android:strokeWidth="4"
+        android:strokeWidth="5.2"
         android:strokeLineCap="round"
         android:strokeLineJoin="round" />
+    <!-- Reo's default lime dot, matching the mascot. -->
+    <path
+        android:fillColor="#C8F26A"
+        android:pathData="M69,48 m-3.6,0 a3.6,3.6 0 1,1 7.2,0 a3.6,3.6 0 1,1 -7.2,0" />
 </vector>
