@@ -1241,7 +1241,7 @@ class KeyboardView(context: Context) : View(context) {
         canvas.save()
         canvas.clipRect(contentRect)
 
-        // Sheet header: title on the left, a quiet "Clear" on the right.
+        // Sheet header
         val headerCy = contentRect.top + clipHeaderH / 2f
         drawLeftLabel(canvas, "Clipboard", contentRect.left + dp(6f), headerCy, sp(13f), t.text)
         val pinnedCount = clipRows.count { it.item?.pinned == true }
@@ -1263,68 +1263,33 @@ class KeyboardView(context: Context) : View(context) {
             if (item != null) {
                 tmpRect.set(left, cardTop, left + row.width, cardTop + row.height)
                 fill.color = t.card
-                canvas.drawRoundRect(tmpRect, dp(16f), dp(16f), fill)
+                canvas.drawRoundRect(tmpRect, dp(12f), dp(12f), fill)
                 if (item.pinned) {
                     clipStroke.color = t.accent
-                    clipStroke.strokeWidth = dp(1.5f)
+                    clipStroke.strokeWidth = dp(1f)
                     tmpRect.inset(dp(1f), dp(1f))
-                    canvas.drawRoundRect(tmpRect, dp(15f), dp(15f), clipStroke)
+                    canvas.drawRoundRect(tmpRect, dp(11f), dp(11f), clipStroke)
                     tmpRect.inset(-dp(1f), -dp(1f))
                 }
 
-                // Tiny icon buttons: delete on the left, pin on the right.
-                drawIcon(canvas, R.drawable.ic_close, tmpRect.left + dp(16f), tmpRect.top + dp(16f), dp(14f), t.textDim)
+                // Delete on left, pin on right
+                drawIcon(canvas, R.drawable.ic_close, tmpRect.left + dp(8f), tmpRect.top + dp(8f), dp(12f), t.textDim)
                 val pinColor = if (item.pinned) t.accent else t.textDim
                 drawIcon(
                     canvas,
                     if (item.pinned) R.drawable.ic_pin_filled else R.drawable.ic_pin,
-                    tmpRect.right - dp(16f), tmpRect.top + dp(16f), dp(16f), pinColor,
+                    tmpRect.right - dp(12f), tmpRect.top + dp(8f), dp(12f), pinColor,
                 )
 
-                // Paste pill, bottom right.
-                val pillW = dp(52f)
-                val pillH = dp(22f)
-                tmpRectThumb.set(
-                    tmpRect.right - dp(10f) - pillW,
-                    tmpRect.bottom - dp(9f) - pillH,
-                    tmpRect.right - dp(10f),
-                    tmpRect.bottom - dp(9f),
-                )
-                fill.color = t.accent
-                canvas.drawRoundRect(tmpRectThumb, pillH / 2f, pillH / 2f, fill)
-                val pillCy = tmpRectThumb.centerY()
-                drawLabel(
-                    canvas, "Paste",
-                    tmpRectThumb.centerX(), tmpRectThumb.centerY(),
-                    sp(10.5f), t.onAccent,
-                )
-
-                // Two-line snippet, sitting under the icon row.
-                var textLeft = tmpRect.left + dp(12f)
-                val textTop = tmpRect.top + dp(30f)
-                val textRight = tmpRect.right - dp(12f)
-                if (item.image != null) {
-                    val thumb = thumbnailFor(item)
-                    if (thumb != null) {
-                        val side = dp(34f)
-                        tmpRectThumb.set(
-                            textLeft, textTop,
-                            textLeft + side, textTop + side,
-                        )
-                        canvas.save()
-                        path.reset()
-                        path.addRoundRect(tmpRectThumb, dp(9f), dp(9f), Path.Direction.CW)
-                        canvas.clipPath(path)
-                        canvas.drawBitmap(thumb, null, tmpRectThumb, imagePaint)
-                        canvas.restore()
-                        textLeft = tmpRectThumb.right + dp(9f)
-                    }
-                }
-                textPaint.textSize = sp(12.5f)
+                // Text snippet below icons
+                var textLeft = tmpRect.left + dp(8f)
+                val textTop = tmpRect.top + dp(24f)
+                val textRight = tmpRect.right - dp(8f)
+                textPaint.textSize = sp(11f)
                 textPaint.color = t.text
                 textPaint.textAlign = Paint.Align.LEFT
-                val maxW = (textRight - textLeft).coerceAtLeast(dp(20f))
-                val visible = if (item.image != null) "Image" else item.text.replace('\n', ' ')
+                val maxW = (textRight - textLeft).coerceAtLeast(dp(16f))
+                val visible = if (item.image != null) "Image" else item.text.replace("\n", " ")
                 val lines = wrapTwoLines(visible, maxW)
                 var baseline = textTop - (textPaint.descent() + textPaint.ascent()) / 2f
                 for (line in lines) {
@@ -1332,22 +1297,18 @@ class KeyboardView(context: Context) : View(context) {
                     baseline += textPaint.descent() - textPaint.ascent()
                 }
 
-                // Time, tucked above the Paste pill.
-                textPaint.textSize = sp(9.5f)
+                // Time above
+                textPaint.textSize = sp(9f)
                 textPaint.color = t.textDim
-                drawLeftLabel(
-                    canvas, relativeTime(item.time),
-                    tmpRect.left + dp(12f), pillCy,
-                    sp(9.5f), t.textDim,
-                )
-                textPaint.textAlign = Paint.Align.CENTER
+                drawLeftLabel(canvas, relativeTime(item.time), tmpRect.left + dp(8f), tmpRect.top + dp(16f), sp(9f), t.textDim)
+
+                // No Paste pill
             } else if (hint != null) {
-                drawLabel(canvas, hint, contentRect.centerX(), cardTop + row.height / 2f, sp(14f), t.textDim)
+                drawLabel(canvas, hint, contentRect.centerX(), cardTop + row.height / 2f, sp(12f), t.textDim)
             }
         }
         canvas.restore()
     }
-
     /** Breaks text into at most two ellipsised lines that fit [maxWidth]. */
     private fun wrapTwoLines(text: String, maxWidth: Float): List<String> {
         if (text.isEmpty()) return listOf("")

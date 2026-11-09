@@ -427,13 +427,25 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         finishWord()
         val before = ic.getTextBeforeCursor(60, 0)?.toString() ?: return
         if (before.isEmpty()) return
-        val trimmed = before.trimEnd()
-        if (trimmed.isEmpty()) {
-            ic.deleteSurroundingText(before.length, 0)
+        // If cursor is in the middle of a word (no space in text before cursor),
+        // delete from the start of that word to the cursor position
+        val lastSpaceIdx = before.lastIndexOf(' ')
+        if (lastSpaceIdx < 0) {
+            // No space found - cursor is in middle of a word or at text start
+            // Delete from beginning of word (or start) to cursor
+            val wordStart = if (lastSpaceIdx < 0) 0 else lastSpaceIdx + 1
+            ic.deleteSurroundingText(before.length - wordStart, 0)
         } else {
-            val lastSpace = trimmed.lastIndexOf(' ')
-            val count = before.length - (lastSpace + 1)
-            if (count > 0) ic.deleteSurroundingText(count, 0)
+            // Cursor is after a space - delete the word at cursor position
+            val trimmed = before.trimEnd()
+            if (trimmed.isEmpty()) {
+                ic.deleteSurroundingText(before.length, 0)
+            } else {
+                val lastSpace = trimmed.lastIndexOf(' ')
+                val count = before.length - (lastSpace + 1)
+                if (count > 0) ic.deleteSurroundingText(count, 0)
+                else ic.deleteSurroundingText(before.length - (lastSpace + 1), 0)
+            }
         }
         lastWord = ""
         keyboardView.setFieldEmpty(isFieldEmpty())
