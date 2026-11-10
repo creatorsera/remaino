@@ -304,15 +304,30 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         val ic = currentInputConnection ?: return
         keyboardView.dismissCopiedChip()
         if (composing.isNotEmpty()) {
-            composing.setLength(composing.length - 1)
+            // The composing caret sits at the end, so trim the last code point.
+            val cut = Character.charCount(composing.codePointBefore(composing.length))
+            composing.setLength(composing.length - cut)
             if (composing.isEmpty()) {
                 ic.commitText("", 1)
             } else {
                 ic.setComposingText(composing.toString(), 1)
             }
             refreshSuggestions()
+            updateFieldEmpty()
+            return
+        }
+        val selected = ic.getSelectedText(0)
+        if (selected != null && selected.isNotEmpty()) {
+            ic.commitText("", 1)
         } else {
-            sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
+            // Delete the character the caret is on (forward delete), not the last letter
+            // of the field. At the very end of the text fall back to a normal backspace.
+            val after = ic.getTextAfterCursor(4, 0)?.toString().orEmpty()
+            if (after.isNotEmpty()) {
+                ic.deleteSurroundingText(0, Editing.firstCodePointLength(after))
+            } else {
+                sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
+            }
         }
         updateFieldEmpty()
     }
@@ -425,27 +440,16 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         val ic = currentInputConnection ?: return
         keyboardView.dismissCopiedChip()
         finishWord()
-        val before = ic.getTextBeforeCursor(60, 0)?.toString() ?: return
-        if (before.isEmpty()) return
-        // If cursor is in the middle of a word (no space in text before cursor),
-        // delete from the start of that word to the cursor position
-        val lastSpaceIdx = before.lastIndexOf(' ')
-        if (lastSpaceIdx < 0) {
-            // No space found - cursor is in middle of a word or at text start
-            // Delete from beginning of word (or start) to cursor
-            val wordStart = if (lastSpaceIdx < 0) 0 else lastSpaceIdx + 1
-            ic.deleteSurroundingText(before.length - wordStart, 0)
-        } else {
-            // Cursor is after a space - delete the word at cursor position
-            val trimmed = before.trimEnd()
-            if (trimmed.isEmpty()) {
-                ic.deleteSurroundingText(before.length, 0)
-            } else {
-                val lastSpace = trimmed.lastIndexOf(' ')
-                val count = before.length - (lastSpace + 1)
-                if (count > 0) ic.deleteSurroundingText(count, 0)
-                else ic.deleteSurroundingText(before.length - (lastSpace + 1), 0)
-            }
+        val before = ic.getTextBeforeCursor(200, 0)?.toString().orEmpty()
+        val after = ic.getTextAfterCursor(200, 0)?.toString().orEmpty()
+        val (behind, ahead) = Editing.wordDeleteCounts(before, after)
+        if (behind + ahead > 0) {
+            // Remove the whole word the caret sits in, on both sides of it.
+            ic.deleteSurroundingText(behind, ahead)
+        } else if (after.isNotEmpty()) {
+            ic.deleteSurroundingText(0, Editing.firstCodePointLength(after))
+        } else if (before.isNotEmpty()) {
+            sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
         }
         lastWord = ""
         keyboardView.setFieldEmpty(isFieldEmpty())

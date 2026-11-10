@@ -51,3 +51,39 @@ class EmojiSearchTest {
         assertTrue(EmojiData.search("pizza zzzz").isEmpty())
     }
 }
+
+class CaretDeleteTest {
+    @Test
+    fun deletesWholeWordAroundCaret() {
+        assertEquals(3 to 2, Editing.wordDeleteCounts("hello wor", "ld there"))
+    }
+
+    @Test
+    fun deletesWordBeforeWhenCaretIsAtEnd() {
+        assertEquals(5 to 0, Editing.wordDeleteCounts("hello world", ""))
+    }
+
+    @Test
+    fun deletesWordAfterWhenCaretIsAfterASpace() {
+        assertEquals(0 to 5, Editing.wordDeleteCounts("hello ", "world there"))
+    }
+
+    @Test
+    fun deletesNothingOnWhitespace() {
+        assertEquals(0 to 0, Editing.wordDeleteCounts("hello ", " there"))
+        assertEquals(0 to 0, Editing.wordDeleteCounts("", ""))
+    }
+
+    @Test
+    fun keepsApostrophesAndHyphensInsideWords() {
+        assertEquals(5 to 0, Editing.wordDeleteCounts("don't", ""))
+        assertEquals(5 to 0, Editing.wordDeleteCounts("well-", ""))
+    }
+
+    @Test
+    fun countsSurrogatePairsAsOneCharacter() {
+        assertEquals(2, Editing.firstCodePointLength("😀 rest"))
+        assertEquals(1, Editing.firstCodePointLength("a rest"))
+        assertEquals(0, Editing.firstCodePointLength(""))
+    }
+}

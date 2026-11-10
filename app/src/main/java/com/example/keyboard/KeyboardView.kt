@@ -262,15 +262,13 @@ class KeyboardView(context: Context) : View(context) {
             max(dp(14f) + dp(extraBottomPad.toFloat()), navInset.toFloat())
         }
 
-    /** A transparent strip above the keyboard where the mascot can stand. */
+    /**
+     * A transparent strip above the keyboard where the mascot can stand.
+     * Only "Above the keys" uses it: "At cursor" draws Reo in the caret overlay and
+     * the toolbar keeps its own lane, so neither should grow the keyboard.
+     */
     private val mascotBandH: Float
-        get() = if (mascotEnabled && placement != MascotPlacement.TOOLBAR &&
-            !(placement == MascotPlacement.CURSOR && overlayMascot)
-        ) {
-            dp(34f)
-        } else {
-            0f
-        }
+        get() = if (mascotEnabled && placement == MascotPlacement.ABOVE) dp(34f) else 0f
 
     /** The grab bar at the top of the floating keyboard. */
     private val handleH: Float get() = if (floating) dp(20f) else 0f
@@ -1021,7 +1019,7 @@ class KeyboardView(context: Context) : View(context) {
         if (lane) {
             drawMascotLane(canvas, t)
             postInvalidateOnAnimation()
-        } else if (mascotEnabled && placement != MascotPlacement.TOOLBAR && mascotVisible()) {
+        } else if (mascotEnabled && placement == MascotPlacement.ABOVE && mascotVisible()) {
             drawBandMascot(canvas, t)
             postInvalidateOnAnimation()
         }
