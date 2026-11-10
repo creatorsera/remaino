@@ -165,3 +165,60 @@ object SuggestionFilter {
 
     fun clean(words: List<String>): List<String> = words.filterNot { isBlocked(it) }
 }
+
+/**
+ * Typo memory: the corrections the user actually chose. When the same mistake is
+ * typed again it can be offered first, on-device and without a network call.
+ */
+class Corrections(context: Context) {
+    private val prefs = context.applicationContext
+        .getSharedPreferences("typo_corrections", Context.MODE_PRIVATE)
+    private val map = HashMap<String, String>()
+
+    init {
+        for ((key, value) in prefs.all) {
+            if (value is String) {
+                val m = clean(key)
+                val c = clean(value)
+                if (m.isNotEmpty() && c.isNotEmpty()) map[m] = c
+            }
+        }
+    }
+
+    /** Remembers that [mistake] was replaced by [correction]. */
+    fun record(mistake: String, correction: String): Boolean {
+        val m = clean(mistake)
+        val c = clean(correction)
+        if (m.isEmpty() || c.isEmpty() || m == c) return false
+        if (map.size >= MAX && !map.containsKey(m)) return false
+        map[m] = c
+        prefs.edit().putString(m, c).apply()
+        return true
+    }
+
+    fun correctionFor(word: String): String? = map[clean(word)]
+
+    fun snapshot(): Map<String, String> = HashMap(map)
+
+    fun count(): Int = map.size
+
+    fun forget(mistake: String) {
+        val m = clean(mistake)
+        if (map.remove(m) != null) prefs.edit().remove(m).apply()
+    }
+
+    fun clear() {
+        map.clear()
+        prefs.edit().clear().apply()
+    }
+
+    private fun clean(word: String): String {
+        val w = word.trim().lowercase().trim('.', ',', '!', '?', '"', '\'')
+        if (w.length < 3 || w.length > 24) return ""
+        return if (w.all { it.isLetter() || it == '\'' }) w else ""
+    }
+
+    private companion object {
+        const val MAX = 2000
+    }
+}

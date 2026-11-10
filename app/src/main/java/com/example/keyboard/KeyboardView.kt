@@ -30,6 +30,7 @@ enum class ShiftState { OFF, ONE_SHOT, CAPS }
 enum class ToolbarAction {
     MENU, CLOSE, MIC, EMOJI, CLIPBOARD, THEME, LANGUAGE, SETTINGS, BACK, CLIP_PAUSE, CLIP_CLEAR, CLIP_EDIT, COPY_PASTE,
     UNDO, REDO, STICKER, STICKER_STYLE, STICKER_FONT, STICKER_SEND,
+    FLOATING, DELETE_WORD, HIDE, TRAY_PREV, TRAY_NEXT,
 }
 
 /**
@@ -67,6 +68,13 @@ class KeyboardView(context: Context) : View(context) {
         val suggestionIndex: Int = -1,
         val tabIndex: Int = -1,
         val resultIndex: Int = -1,
+        val tray: Boolean = false,
+    )
+
+    private class TrayTile(
+        val label: String,
+        val icon: Int,
+        val action: ToolbarAction,
     )
 
     private class SheetItem(
@@ -177,6 +185,23 @@ class KeyboardView(context: Context) : View(context) {
     private var clipContentH = 0f
     private var clipScrollY = 0f
     private var clipEditMode = false
+
+    // The action tray: a labelled two-column grid over the keys area.
+    private val trayTiles = listOf(
+        TrayTile("Emoji", R.drawable.ic_smile, ToolbarAction.EMOJI),
+        TrayTile("Sticker", R.drawable.ic_sticker, ToolbarAction.STICKER),
+        TrayTile("Clipboard", R.drawable.ic_clipboard, ToolbarAction.CLIPBOARD),
+        TrayTile("Undo", R.drawable.ic_undo, ToolbarAction.UNDO),
+        TrayTile("Redo", R.drawable.ic_redo, ToolbarAction.REDO),
+        TrayTile("Settings", R.drawable.ic_sliders, ToolbarAction.SETTINGS),
+        TrayTile("Language", R.drawable.ic_globe, ToolbarAction.LANGUAGE),
+        TrayTile("Floating", R.drawable.ic_grid, ToolbarAction.FLOATING),
+        TrayTile("Delete word", R.drawable.ic_backspace, ToolbarAction.DELETE_WORD),
+        TrayTile("Hide", R.drawable.ic_close, ToolbarAction.HIDE),
+    )
+    private val trayPerPage = 6
+    private var trayPage = 0
+    private val trayPageCount: Int get() = (trayTiles.size + trayPerPage - 1) / trayPerPage
 
     private val abcKey = Key("ABC", KeyType.LETTERS)
     private val panelSpaceKey = Key("", KeyType.SPACE)
@@ -497,15 +522,13 @@ class KeyboardView(context: Context) : View(context) {
         targets.add(Target(leftRect, action = if (trayOpen) ToolbarAction.CLOSE else ToolbarAction.MENU))
 
         if (trayOpen) {
+            if (trayPage >= trayPageCount) trayPage = 0
             val actions = listOf(
-                ToolbarAction.UNDO,
-                ToolbarAction.REDO,
                 ToolbarAction.EMOJI,
                 ToolbarAction.STICKER,
                 ToolbarAction.CLIPBOARD,
-                ToolbarAction.MIC,
-                ToolbarAction.THEME,
-                ToolbarAction.LANGUAGE,
+                ToolbarAction.UNDO,
+                ToolbarAction.REDO,
                 ToolbarAction.SETTINGS,
             )
             val startX = dp(60f)
@@ -515,6 +538,7 @@ class KeyboardView(context: Context) : View(context) {
                 val cx = startX + step * (i + 0.5f)
                 targets.add(Target(RectF(cx - step / 2f, topOffset(), cx + step / 2f, topOffset() + toolbarH), action = a))
             }
+            addTrayTargets()
         } else {
             val micCx = w - dp(28f)
             targets.add(
@@ -542,7 +566,55 @@ class KeyboardView(context: Context) : View(context) {
             }
         }
 
+        if (trayOpen) return
         if (panel == Panel.EMOJI) buildEmojiTargets(w) else buildKeyTargets(w)
+    }
+
+    private fun trayArea(): RectF {
+        val top = keysTop() + dp(6f)
+        val bottom = keysTop() + keysHeight() - dp(34f)
+        return RectF(sideMargin + dp(6f), top, width - sideMargin - dp(6f), max(top + dp(80f), bottom))
+    }
+
+    private fun addTrayTargets() {
+        if (trayPage >= trayPageCount) trayPage = 0
+        val area = trayArea()
+        val gap = dp(8f)
+        val cols = 2
+        val rows = 3
+        val tileW = (area.width() - gap) / cols
+        val tileH = (area.height() - gap * (rows - 1)) / rows
+        val start = trayPage * trayPerPage
+        val end = min(start + trayPerPage, trayTiles.size)
+        for (i in start until end) {
+            val idx = i - start
+            val col = idx % cols
+            val row = idx / cols
+            val l = area.left + col * (tileW + gap)
+            val t = area.top + row * (tileH + gap)
+            targets.add(
+                Target(
+                    RectF(l, t, l + tileW, t + tileH),
+                    action = trayTiles[i].action,
+                    tray = true,
+                ),
+            )
+        }
+        if (trayPageCount > 1) {
+            val dotCy = area.bottom + dp(14f)
+            targets.add(
+                Target(
+                    RectF(width / 2f - dp(80f), dotCy - dp(16f), width / 2f - dp(4f), dotCy + dp(16f)),
+                    action = ToolbarAction.TRAY_PREV,
+                ),
+            )
+            targets.add(
+                Target(
+                    RectF(width / 2f + dp(4f), dotCy - dp(16f), width / 2f + dp(80f), dotCy + dp(16f)),
+                    action = ToolbarAction.TRAY_NEXT,
+                ),
+            )
+        }
     }
 
     private fun buildKeyTargets(w: Float) {
@@ -1014,7 +1086,7 @@ class KeyboardView(context: Context) : View(context) {
                 tg.suggestionIndex >= 0 -> if (!lane) drawChip(canvas, tg, t)
                 tg.resultIndex >= 0 -> drawResult(canvas, tg, t)
                 tg.tabIndex >= 0 -> drawTab(canvas, tg, t)
-                action != null -> if (action != ToolbarAction.COPY_PASTE) {
+                action != null -> if (action != ToolbarAction.COPY_PASTE && !tg.tray) {
                     drawToolbarButton(canvas, tg, action, t)
                 }
                 key != null -> drawKey(canvas, tg, key, t)
@@ -1026,6 +1098,8 @@ class KeyboardView(context: Context) : View(context) {
             Panel.CLIPBOARD -> drawClipboardList(canvas, t)
             Panel.KEYS -> drawPreviews(canvas, t)
         }
+
+        if (trayOpen) drawTrayGrid(canvas, t)
 
         if (lane) {
             drawMascotLane(canvas, t)
@@ -1184,6 +1258,10 @@ class KeyboardView(context: Context) : View(context) {
             ToolbarAction.STICKER_STYLE -> R.drawable.ic_theme
             ToolbarAction.STICKER_FONT -> R.drawable.ic_text
             ToolbarAction.STICKER_SEND -> R.drawable.ic_send
+            ToolbarAction.FLOATING -> R.drawable.ic_grid
+            ToolbarAction.DELETE_WORD -> R.drawable.ic_backspace
+            ToolbarAction.HIDE -> R.drawable.ic_close
+            ToolbarAction.TRAY_PREV, ToolbarAction.TRAY_NEXT -> R.drawable.ic_back
         }
         drawIcon(canvas, res, cx, cy, dp(24f), t.icon)
     }
@@ -1242,6 +1320,59 @@ class KeyboardView(context: Context) : View(context) {
             }
         }
         canvas.restore()
+    }
+
+    private fun drawTrayGrid(canvas: Canvas, t: KeyboardTheme) {
+        // A scrim so the keys underneath never bleed through.
+        fill.color = ColorUtils.blendARGB(t.base, Color.BLACK, 0.12f)
+        tmpRect.set(0f, keysTop(), width.toFloat(), height.toFloat())
+        canvas.drawRect(tmpRect, fill)
+
+        for (tg in targets) {
+            if (!tg.tray) continue
+            val tile = trayTiles.firstOrNull { it.action == tg.action } ?: continue
+            val r = tg.rect
+            fill.color = if (isPressed(tg)) {
+                ColorUtils.blendARGB(t.card, Color.WHITE, 0.10f)
+            } else {
+                t.card
+            }
+            canvas.drawRoundRect(r, dp(22f), dp(22f), fill)
+
+            drawIcon(canvas, tile.icon, r.left + dp(26f), r.centerY(), dp(22f), t.icon)
+
+            textPaint.textSize = sp(14f)
+            textPaint.color = t.text
+            textPaint.textAlign = Paint.Align.LEFT
+            val labelLeft = r.left + dp(48f)
+            val labelRight = r.right - dp(26f)
+            val label = TextUtils.ellipsize(
+                tile.label, textPaint,
+                (labelRight - labelLeft).coerceAtLeast(dp(8f)),
+                TextUtils.TruncateAt.END,
+            )
+            val baseline = r.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f
+            canvas.drawText(label, 0, label.length, labelLeft, baseline, textPaint)
+
+            textPaint.color = t.textDim
+            textPaint.textSize = sp(17f)
+            textPaint.textAlign = Paint.Align.CENTER
+            canvas.drawText("›", r.right - dp(16f), baseline, textPaint)
+        }
+
+        if (trayPageCount > 1) {
+            val area = trayArea()
+            val dotY = area.bottom + dp(14f)
+            val dotR = dp(3f)
+            val step = dp(14f)
+            val total = (trayPageCount - 1) * step
+            var x = width / 2f - total / 2f
+            for (i in 0 until trayPageCount) {
+                fill.color = if (i == trayPage) t.accent else t.textDim
+                canvas.drawCircle(x, dotY, dotR, fill)
+                x += step
+            }
+        }
     }
 
     private fun drawClipboardList(canvas: Canvas, t: KeyboardTheme) {
@@ -1606,7 +1737,7 @@ class KeyboardView(context: Context) : View(context) {
         }
         val action = tg.action
         if (action != null) {
-            handleAction(action)
+            if (tg.tray) runTrayAction(action) else handleAction(action)
             return
         }
         val key = tg.key ?: return
@@ -1633,14 +1764,36 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
+    private fun runTrayAction(action: ToolbarAction) {
+        trayOpen = false
+        trayPage = 0
+        rebuildTargets()
+        when (action) {
+            ToolbarAction.EMOJI -> openEmoji()
+            ToolbarAction.CLIPBOARD -> openClipboard()
+            ToolbarAction.STICKER -> startCapture(Capture.STICKER)
+            else -> handleAction(action)
+        }
+        invalidate()
+    }
+
     private fun handleAction(action: ToolbarAction) {
         when (action) {
             ToolbarAction.MENU -> {
                 trayOpen = true
+                trayPage = 0
                 rebuildTargets()
                 invalidate()
             }
             ToolbarAction.CLOSE -> closeTray()
+            ToolbarAction.TRAY_PREV, ToolbarAction.TRAY_NEXT -> {
+                if (trayPageCount > 0) {
+                    val delta = if (action == ToolbarAction.TRAY_NEXT) 1 else -1
+                    trayPage = (trayPage + delta + trayPageCount) % trayPageCount
+                    rebuildTargets()
+                    invalidate()
+                }
+            }
             ToolbarAction.EMOJI -> openEmoji()
             ToolbarAction.CLIPBOARD -> openClipboard()
             ToolbarAction.BACK -> {

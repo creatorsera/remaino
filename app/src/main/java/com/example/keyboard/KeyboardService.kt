@@ -32,8 +32,12 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
     private lateinit var wordFreq: WordFrequencies
     private lateinit var bigrams: Bigrams
     private lateinit var hiddenWords: HiddenWords
+    private lateinit var corrections: Corrections
     private val engine by lazy { SuggestionEngine(EnglishWords.load(this)) }
     private val composing = StringBuilder()
+
+    /** The word as it looked before the user started correcting it. */
+    private var correctedFrom: String? = null
 
     /** Word-level undo/redo. Each entry is a committed word (with its trailing space). */
     private val undoStack = ArrayDeque<String>()
@@ -71,6 +75,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         wordFreq = WordFrequencies.get(this)
         bigrams = Bigrams(this)
         hiddenWords = HiddenWords(this)
+        corrections = Corrections(this)
         prefs = KeyboardPrefs(this)
         floatingHost = FloatingHost(this, prefs)
         mascotOverlay = MascotOverlay(this)
@@ -304,6 +309,8 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         val ic = currentInputConnection ?: return
         keyboardView.dismissCopiedChip()
         if (composing.isNotEmpty()) {
+            // Remember the typo the user is fixing, so it can be learned on commit.
+            correctedFrom = composing.toString()
             // The composing caret sits at the end, so trim the last code point.
             val cut = Character.charCount(composing.codePointBefore(composing.length))
             composing.setLength(composing.length - cut)
@@ -384,6 +391,10 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         }
         val typed = composing.toString()
         composing.setLength(0)
+        correctedFrom = null
+        if (!sensitive && typed.length >= 3 && !typed.equals(word, ignoreCase = true)) {
+            corrections.record(typed, word)
+        }
         val out = if (typed.isNotEmpty() && typed[0].isUpperCase()) {
             word.replaceFirstChar { it.uppercase() }
         } else {
@@ -466,6 +477,12 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
             ToolbarAction.LANGUAGE -> onGlobe()
             ToolbarAction.UNDO -> undoWord()
             ToolbarAction.REDO -> redoWord()
+            ToolbarAction.FLOATING -> {
+                prefs.floatingKeyboard = !prefs.floatingKeyboard
+                applyHostMode()
+            }
+            ToolbarAction.HIDE -> requestHideSelf(0)
+            ToolbarAction.DELETE_WORD -> onDeleteWord()
             ToolbarAction.MENU, ToolbarAction.CLOSE -> Unit
             else -> Toast.makeText(this, "Coming soon", Toast.LENGTH_SHORT).show()
         }
@@ -679,10 +696,20 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
     }
 
     private fun finishWord() {
-        if (composing.isEmpty()) return
+        if (composing.isEmpty()) {
+            correctedFrom = null
+            return
+        }
         val word = composing.toString()
         composing.setLength(0)
         currentInputConnection?.finishComposingText()
+        val from = correctedFrom
+        correctedFrom = null
+        if (!sensitive && from != null && from.length >= 3 &&
+            !from.equals(word, ignoreCase = true) && !word.startsWith(from, ignoreCase = true)
+        ) {
+            corrections.record(from, word)
+        }
         countWord(word)
     }
 
@@ -770,7 +797,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
                 .distinct()
             if (prefs.blockInappropriate) SuggestionFilter.clean(merged) else merged
         } else {
-            val english = engine.suggest(typed, wordFreq.snapshot(), 2, hidden)
+            val english = engine.suggest(typed, wordFreq.snapshot(), 2, hidden, corrections.snapshot())
             val completions = (english + RomanUrdu.complete(typed, 2))
                 .filterNot { it in hidden }
                 .distinct()
