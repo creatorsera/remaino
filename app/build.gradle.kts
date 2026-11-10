@@ -12,7 +12,7 @@ android {
         targetSdk = 36
         // CI run number keeps versionCode rising so every new build can update the last one
         versionCode = maxOf(System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0, 5)
-        versionName = System.getenv("VERSION_NAME")?.removePrefix("v")?.takeIf { it.isNotBlank() } ?: "0.6.0"
+        versionName = System.getenv("VERSION_NAME")?.removePrefix("v")?.takeIf { it.isNotBlank() } ?: "0.7.0"
     }
 
     // Release signing is only configured when the CI release job provides a keystore.
@@ -40,13 +40,17 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            // With no private keystore, sign with the shared debug key so the APK
+            // still installs in place and the updater keeps working.
+            signingConfig = if (System.getenv("KEYSTORE_PATH") != null) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            if (System.getenv("KEYSTORE_PATH") != null) {
-                signingConfig = signingConfigs.getByName("release")
-            }
         }
     }
 

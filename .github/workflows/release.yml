@@ -3,6 +3,12 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag, for example v0.7.0"
+        required: true
+        default: "v0.7.0"
 
 permissions:
   contents: write
@@ -10,6 +16,8 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
     steps:
       - uses: actions/checkout@v4
 
@@ -22,9 +30,18 @@ jobs:
         with:
           gradle-version: "9.6.0"
 
+      - name: Resolve version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION_NAME=${{ inputs.version }}" >> "$GITHUB_ENV"
+          else
+            echo "VERSION_NAME=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+          fi
+
+      # Optional private keystore. Without the secret the build falls back to the
+      # shared debug key, which still installs over the existing debug builds.
       - name: Decode signing keystore
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        if: ${{ env.KEYSTORE_BASE64 != '' }}
         run: |
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
           echo "KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
@@ -34,17 +51,19 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          VERSION_NAME: ${{ github.ref_name }}
+          VERSION_NAME: ${{ env.VERSION_NAME }}
         run: gradle testDebugUnitTest assembleRelease --stacktrace
 
       - name: Rename APK and create checksum
         run: |
-          cp app/build/outputs/apk/release/app-release.apk "remino-${GITHUB_REF_NAME}.apk"
-          sha256sum "remino-${GITHUB_REF_NAME}.apk" > "remino-${GITHUB_REF_NAME}.apk.sha256"
+          cp app/build/outputs/apk/release/app-release.apk "remino-${VERSION_NAME}.apk"
+          sha256sum "remino-${VERSION_NAME}.apk" > "remino-${VERSION_NAME}.apk.sha256"
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.VERSION_NAME }}
+          name: Remino ${{ env.VERSION_NAME }}
           files: |
             remino-*.apk
             remino-*.apk.sha256
