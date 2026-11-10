@@ -46,8 +46,14 @@ import kotlin.math.max
 /** Setup, options, typing stats and encrypted backup. */
 class SettingsActivity : Activity() {
 
+    private enum class SettingsPage {
+        HOME, APPEARANCE, KEYBOARD, REO, TYPING, CLIPBOARD, PRIVACY, SETUP, ACTIVITY, DATA, UPDATES,
+    }
+
     private lateinit var stats: TypingStats
     private lateinit var options: KeyboardPrefs
+    private lateinit var rootView: LinearLayout
+    private var page = SettingsPage.HOME
 
     private lateinit var statusChip: TextView
     private lateinit var enabledStatus: TextView
@@ -152,14 +158,14 @@ class SettingsActivity : Activity() {
         options = KeyboardPrefs(this)
         applyPalette()
 
-        val root = LinearLayout(this).apply {
+        rootView = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(10), dp(20), dp(28))
         }
         val scroll = ScrollView(this).apply {
             setBackgroundColor(bg)
             clipToPadding = false
-            addView(root)
+            addView(rootView)
         }
         setContentView(scroll)
         ViewCompat.setOnApplyWindowInsetsListener(scroll) { v, insets ->
@@ -167,33 +173,74 @@ class SettingsActivity : Activity() {
             v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
             insets
         }
+        renderPage()
+    }
 
-        root.addView(topBar())
-        root.addView(hero())
-
-        val tabRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            background = roundRect(surfaceLow, 999)
-            setPadding(dp(5), dp(5), dp(5), dp(5))
-            layoutParams = wideTop(dp(18))
+    /** Rebuilds the visible settings page. Pages are layers, so Back returns home. */
+    private fun renderPage() {
+        rootView.removeAllViews()
+        when (page) {
+            SettingsPage.HOME -> {
+                rootView.addView(topBar())
+                rootView.addView(hero())
+                buildHome(rootView)
+            }
+            SettingsPage.ACTIVITY -> {
+                rootView.addView(pageHeader("Activity"))
+                buildActivityPage(rootView)
+            }
+            SettingsPage.APPEARANCE -> {
+                rootView.addView(pageHeader("Appearance"))
+                buildAppearancePage(rootView)
+            }
+            SettingsPage.KEYBOARD -> {
+                rootView.addView(pageHeader("Keyboard & keys"))
+                buildKeyboardPage(rootView)
+            }
+            SettingsPage.REO -> {
+                rootView.addView(pageHeader("Reo the mascot"))
+                buildReoPage(rootView)
+            }
+            SettingsPage.TYPING -> {
+                rootView.addView(pageHeader("Typing & suggestions"))
+                buildTypingPage(rootView)
+            }
+            SettingsPage.CLIPBOARD -> {
+                rootView.addView(pageHeader("Clipboard"))
+                buildClipboardPage(rootView)
+            }
+            SettingsPage.PRIVACY -> {
+                rootView.addView(pageHeader("Privacy"))
+                buildPrivacyPage(rootView)
+            }
+            SettingsPage.SETUP -> {
+                rootView.addView(pageHeader("Set up"))
+                buildSetupPage(rootView)
+            }
+            SettingsPage.DATA -> {
+                rootView.addView(pageHeader("Backup & data"))
+                buildDataPage(rootView)
+            }
+            SettingsPage.UPDATES -> {
+                rootView.addView(pageHeader("Updates"))
+                buildUpdatesPage(rootView)
+            }
         }
-        tabKeyboard = tab("Keyboard", true)
-        tabActivity = tab("Activity", false)
-        tabKeyboard.setOnClickListener { showTab(true) }
-        tabActivity.setOnClickListener { showTab(false) }
-        tabRow.addView(tabKeyboard)
-        tabRow.addView(tabActivity)
-        root.addView(tabRow)
+        refreshPageData()
+        if (page == SettingsPage.UPDATES) maybeAutoCheckUpdates()
+    }
 
-        keyboardPane = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        activityPane = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            visibility = View.GONE
+    private fun openPage(target: SettingsPage) {
+        page = target
+        renderPage()
+    }
+
+    override fun onBackPressed() {
+        if (page == SettingsPage.HOME) {
+            super.onBackPressed()
+        } else {
+            openPage(SettingsPage.HOME)
         }
-        buildKeyboardPane(keyboardPane)
-        buildActivityPane(activityPane)
-        root.addView(keyboardPane)
-        root.addView(activityPane)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -203,24 +250,38 @@ class SettingsActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        val active = isEnabled() && isSelected()
-        enabledStatus.text = if (isEnabled()) "Enabled" else "Not enabled yet"
-        selectedStatus.text = if (isSelected()) "In use" else "Not selected yet"
-        statusChip.text = if (active) "Active" else "Set up"
-        statusChip.setTextColor(if (active) signalInk else 0xFFB97D2A.toInt())
-        statusChip.background = if (active) {
-            strokeRound(0x1AC8F26A, 0x47C8F26A, 999)
-        } else {
-            strokeRound(0x1AE8B063, 0x47E8B063, 999)
-        }
-        refreshStats()
-        refreshClipboardPreview()
+        refreshPageData()
         if (waitingForInstallPermission && canInstallPackages()) {
             waitingForInstallPermission = false
             latestRelease?.let { beginUpdate(it) }
         }
-        refreshUpdateState()
         maybeAutoCheckUpdates()
+    }
+
+    /** Refreshes only the widgets that exist on the page currently shown. */
+    private fun refreshPageData() {
+        if (::statusChip.isInitialized) {
+            val active = isEnabled() && isSelected()
+            statusChip.text = if (active) "Active" else "Set up"
+            statusChip.setTextColor(if (active) signalInk else 0xFFB97D2A.toInt())
+            statusChip.background = if (active) {
+                strokeRound(0x1AC8F26A, 0x47C8F26A, 999)
+            } else {
+                strokeRound(0x1AE8B063, 0x47E8B063, 999)
+            }
+        }
+        if (::enabledStatus.isInitialized) {
+            enabledStatus.text = if (isEnabled()) "Enabled" else "Not enabled yet"
+        }
+        if (::selectedStatus.isInitialized) {
+            selectedStatus.text = if (isSelected()) "In use" else "Not selected yet"
+        }
+        if (::todayValue.isInitialized) {
+            todayValue.text = String.format(Locale.getDefault(), "%,d", stats.todayWords())
+        }
+        if (::chart.isInitialized || ::spark.isInitialized) refreshStats()
+        if (::clipPreview.isInitialized) refreshClipboardPreview()
+        if (::updateTitle.isInitialized) refreshUpdateState()
     }
 
     // ------------------------------------------------------------------ top
@@ -281,10 +342,95 @@ class SettingsActivity : Activity() {
 
     // ------------------------------------------------------------- keyboard
 
-    private fun buildKeyboardPane(pane: LinearLayout) {
-        // Appearance
+    private fun buildHome(pane: LinearLayout) {
+        val card = card()
+        card.addView(sectionHeader("Settings"))
+        val items = listOf(
+            Triple("Appearance", "Light, dark, or follow the phone", SettingsPage.APPEARANCE),
+            Triple("Keyboard & keys", "Height, number row, haptics, floating", SettingsPage.KEYBOARD),
+            Triple("Reo the mascot", "Placement, colour and nudging", SettingsPage.REO),
+            Triple("Typing & suggestions", "Capitalization, predictions, emoji", SettingsPage.TYPING),
+            Triple("Clipboard", "History, images and expiry", SettingsPage.CLIPBOARD),
+            Triple("Privacy", "Private apps and sensitive fields", SettingsPage.PRIVACY),
+            Triple("Set up", "Enable Remino, choose it, test it", SettingsPage.SETUP),
+        )
+        items.forEachIndexed { i, (title, subtitle, target) ->
+            if (i > 0) card.addView(divider())
+            card.addView(categoryRow(title, subtitle, iconFor(target), target))
+        }
+        pane.addView(card)
+
+        val more = card()
+        more.addView(sectionHeader("Your data"))
+        more.addView(categoryRow("Activity & stats", "Words typed, streak and history", R.drawable.ic_clock, SettingsPage.ACTIVITY))
+        more.addView(divider())
+        more.addView(categoryRow("Backup & data", "Export or restore an encrypted backup", R.drawable.ic_grid, SettingsPage.DATA))
+        more.addView(divider())
+        more.addView(categoryRow("Updates", "Check for a new Remino release", R.drawable.ic_send, SettingsPage.UPDATES))
+        pane.addView(more)
+    }
+
+    private fun iconFor(target: SettingsPage): Int = when (target) {
+        SettingsPage.APPEARANCE -> R.drawable.ic_theme
+        SettingsPage.KEYBOARD -> R.drawable.ic_sliders
+        SettingsPage.REO -> R.drawable.ic_paw
+        SettingsPage.TYPING -> R.drawable.ic_text
+        SettingsPage.CLIPBOARD -> R.drawable.ic_clipboard
+        SettingsPage.PRIVACY -> R.drawable.ic_person
+        SettingsPage.SETUP -> R.drawable.ic_enter
+        else -> R.drawable.ic_grid
+    }
+
+    private fun pageHeader(title: String): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(48),
+        )
+        addView(label("‹", 30f, textMain, false).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(4), 0, dp(16), dp(2))
+            setOnClickListener { openPage(SettingsPage.HOME) }
+        })
+        addView(label(title, 22f, textMain, true).also {
+            it.letterSpacing = -0.03f
+            it.gravity = Gravity.CENTER_VERTICAL
+        })
+    }
+
+    private fun categoryRow(
+        title: String,
+        subtitle: String,
+        icon: Int,
+        target: SettingsPage,
+    ): LinearLayout = rowShell {
+        val iconView = ImageView(this@SettingsActivity).apply {
+            setImageResource(icon)
+            setColorFilter(textDim)
+        }
+        addView(iconView, LinearLayout.LayoutParams(dp(22), dp(22)).apply { marginEnd = dp(13) })
+        val body = LinearLayout(this@SettingsActivity).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        body.addView(label(title, 14f, textMain, true))
+        body.addView(label(subtitle, 11f, textFaint, false).also { it.topPad(2) })
+        addView(body)
+        addView(label("›", 22f, textFaint, false))
+    }.apply {
+        isClickable = true
+        setOnClickListener { openPage(target) }
+    }
+
+    private fun buildAppearancePage(pane: LinearLayout) {
         val look = card()
-        look.addView(sectionHeader("Appearance"))
+        look.addView(sectionHeader("Theme"))
+        look.addView(
+            label(
+                "Auto follows the phone. Light uses the warm Paper palette; Dark uses Ink.",
+                12f, textDim, false,
+            ).also { it.setPadding(dp(15), 0, dp(15), dp(10)) },
+        )
         val chipRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(15), 0, dp(15), dp(14))
@@ -311,58 +457,17 @@ class SettingsActivity : Activity() {
         look.addView(chipRow)
         updateAppearanceChips()
         pane.addView(look)
+    }
 
-        // Set up
-        val setup = card()
-        setup.addView(sectionHeader("Set up"))
-        enabledStatus = label("", 11f, textFaint, false)
-        selectedStatus = label("", 11f, textFaint, false)
-        setup.addView(stepRow("Enable keyboard", enabledStatus, {
-            startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
-        }))
-        setup.addView(divider())
-        setup.addView(stepRow("Set as default", selectedStatus, {
-            val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
-            imm.showInputMethodPicker()
-        }))
-        pane.addView(setup)
-
-        // Try field
-        val tryCard = card()
-        tryCard.addView(sectionHeader("Try it"))
-        val field = EditText(this).apply {
-            hint = "Type here to test"
-            setHintTextColor(textFaint)
-            setTextColor(textMain)
-            textSize = 14f
-            background = roundRect(raised, 14)
-            setPadding(dp(14), dp(12), dp(14), dp(12))
-            layoutParams = wideTop(dp(10))
-        }
-        tryCard.addView(field)
-        pane.addView(tryCard)
-
-        // Keyboard options
+    private fun buildKeyboardPage(pane: LinearLayout) {
         val keys = card()
-        keys.addView(sectionHeader("Keyboard"))
+        keys.addView(sectionHeader("Keys"))
         keys.addView(switchRow("Number row", "Digits above the letters", options.showNumberRow) {
             options.showNumberRow = it
         })
         keys.addView(switchRow("Key preview", "Bubble above the key you press", options.keyPreview) {
             options.keyPreview = it
         })
-        keys.addView(switchRow("Reo", "Your little companion who keeps the caret company", options.mascot) {
-            options.mascot = it
-            updateMascotChips()
-        })
-        keys.addView(mascotPlacementRow())
-        val floatingRow = switchRow(
-            "Floating keyboard",
-            "A movable keyboard window over the app. Needs Display over other apps",
-            options.floatingKeyboard,
-        ) { requestFloating(it) }
-        floatingSwitch = floatingRow.getChildAt(1) as? Switch
-        keys.addView(floatingRow)
         keys.addView(switchRow("Haptics", "A short buzz on every key", options.haptics) {
             options.haptics = it
         })
@@ -371,7 +476,55 @@ class SettingsActivity : Activity() {
         })
         pane.addView(keys)
 
-        // Typing behaviour
+        val size = card()
+        size.addView(sectionHeader("Size"))
+        heightLabel = label("", 13f, textDim, false)
+        size.addView(sliderRow("Keyboard height", heightLabel, 80, 130, options.keyboardHeightPercent) {
+            options.keyboardHeightPercent = it
+            heightLabel.text = "${it}%"
+        })
+        heightLabel.text = "${options.keyboardHeightPercent}%"
+        paddingLabel = label("", 13f, textDim, false)
+        size.addView(sliderRow("Bottom padding", paddingLabel, 0, 24, options.keyboardPadding) {
+            options.keyboardPadding = it
+            paddingLabel.text = "${it}dp"
+        })
+        paddingLabel.text = "${options.keyboardPadding}dp"
+        pane.addView(size)
+
+        val floating = card()
+        floating.addView(sectionHeader("Floating"))
+        val floatingRow = switchRow(
+            "Floating keyboard",
+            "A movable keyboard window over the app. Needs Display over other apps",
+            options.floatingKeyboard,
+        ) { requestFloating(it) }
+        floatingSwitch = floatingRow.getChildAt(1) as? Switch
+        floating.addView(floatingRow)
+        pane.addView(floating)
+    }
+
+    private fun buildReoPage(pane: LinearLayout) {
+        val keys = card()
+        keys.addView(sectionHeader("Reo"))
+        keys.addView(switchRow("Reo", "Your little companion who keeps the caret company", options.mascot) {
+            options.mascot = it
+            updateMascotChips()
+        })
+        keys.addView(mascotPlacementRow())
+        pane.addView(keys)
+        val note = card()
+        note.addView(
+            label(
+                "At cursor draws Reo beside the caret. Toolbar keeps Reo in the suggestion strip. " +
+                    "Above adds a small strip above the keys.",
+                12f, textDim, false,
+            ).also { it.setPadding(dp(15), dp(4), dp(15), dp(8)) },
+        )
+        pane.addView(note)
+    }
+
+    private fun buildTypingPage(pane: LinearLayout) {
         val typing = card()
         typing.addView(sectionHeader("Typing"))
         typing.addView(
@@ -402,21 +555,25 @@ class SettingsActivity : Activity() {
                 options.emojiPrediction,
             ) { options.emojiPrediction = it },
         )
-        typing.addView(
+        pane.addView(typing)
+
+        val suggestions = card()
+        suggestions.addView(sectionHeader("Suggestions"))
+        suggestions.addView(
             switchRow(
                 "Block inappropriate suggestions",
                 "Filter explicit words from the suggestion bar",
                 options.blockInappropriate,
             ) { options.blockInappropriate = it },
         )
-        typing.addView(emojiToneRow())
-        typing.addView(
+        suggestions.addView(emojiToneRow())
+        suggestions.addView(
             label(
                 "Long-press a suggestion on the keyboard to remove it.",
                 11f, textFaint, false,
             ).also { it.topPad(12) },
         )
-        typing.addView(
+        suggestions.addView(
             pill("Restore hidden suggestions", tonal = true) {
                 val hidden = HiddenWords(this)
                 if (hidden.count() == 0) {
@@ -427,26 +584,10 @@ class SettingsActivity : Activity() {
                 }
             },
         )
-        pane.addView(typing)
+        pane.addView(suggestions)
+    }
 
-        // Size
-        val size = card()
-        size.addView(sectionHeader("Size"))
-        heightLabel = label("", 13f, textDim, false)
-        size.addView(sliderRow("Keyboard height", heightLabel, 80, 130, options.keyboardHeightPercent) {
-            options.keyboardHeightPercent = it
-            heightLabel.text = "${it}%"
-        })
-        heightLabel.text = "${options.keyboardHeightPercent}%"
-        paddingLabel = label("", 13f, textDim, false)
-        size.addView(sliderRow("Bottom padding", paddingLabel, 0, 24, options.keyboardPadding) {
-            options.keyboardPadding = it
-            paddingLabel.text = "${it}dp"
-        })
-        paddingLabel.text = "${options.keyboardPadding}dp"
-        pane.addView(size)
-
-        // Clipboard
+    private fun buildClipboardPage(pane: LinearLayout) {
         val clip = card()
         clip.addView(sectionHeader("Clipboard"))
         clip.addView(
@@ -472,8 +613,9 @@ class SettingsActivity : Activity() {
         clip.addView(expireButton)
         clip.addView(pill("Clear all clipboard history", tonal = true) { confirmClearClipboard() })
         pane.addView(clip)
+    }
 
-        // Privacy
+    private fun buildPrivacyPage(pane: LinearLayout) {
         val privacy = card()
         privacy.addView(sectionHeader("Privacy"))
         privacy.addView(
@@ -485,9 +627,82 @@ class SettingsActivity : Activity() {
         )
         privacy.addView(pill("Choose private apps") { showPrivateAppsDialog() })
         pane.addView(privacy)
+        val note = card()
+        note.addView(
+            label(
+                "Nothing you type is uploaded. Suggestions and typo learning stay on this phone.",
+                12f, textDim, false,
+            ).also { it.setPadding(dp(15), dp(4), dp(15), dp(8)) },
+        )
+        pane.addView(note)
+    }
 
-        // Update
+    private fun buildSetupPage(pane: LinearLayout) {
+        val setup = card()
+        setup.addView(sectionHeader("Keyboard"))
+        enabledStatus = label("", 11f, textFaint, false)
+        selectedStatus = label("", 11f, textFaint, false)
+        setup.addView(stepRow("Enable keyboard", enabledStatus, {
+            startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+        }))
+        setup.addView(divider())
+        setup.addView(stepRow("Set as default", selectedStatus, {
+            val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+            imm.showInputMethodPicker()
+        }))
+        pane.addView(setup)
+
+        val tryCard = card()
+        tryCard.addView(sectionHeader("Try it"))
+        val field = EditText(this).apply {
+            hint = "Type here to test"
+            setHintTextColor(textFaint)
+            setTextColor(textMain)
+            textSize = 14f
+            background = roundRect(raised, 14)
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            layoutParams = wideTop(dp(10))
+        }
+        tryCard.addView(field)
+        pane.addView(tryCard)
+    }
+
+    private fun buildDataPage(pane: LinearLayout) {
+        val backup = card()
+        backup.addView(sectionHeader("Backup"))
+        backup.addView(
+            label(
+                "Settings, stats and learned words in one file protected by a password. " +
+                    "If you forget the password the file cannot be opened.",
+                12f,
+                textDim,
+                false,
+            ).also { it.topPad(8) },
+        )
+        backup.addView(pill("Export backup") { showExportDialog() })
+        backup.addView(pill("Import backup") { startImportPicker() })
+        pane.addView(backup)
+    }
+
+    private fun buildUpdatesPage(pane: LinearLayout) {
         pane.addView(updateCard())
+        val version = try {
+            packageManager.getPackageInfo(packageName, 0).versionName ?: "0"
+        } catch (e: Exception) {
+            "0"
+        }
+        val about = card()
+        about.addView(sectionHeader("About"))
+        about.addView(
+            label("Remino v$version", 13f, textDim, false).also { it.topPad(6) },
+        )
+        about.addView(
+            label(
+                "Releases are published on GitHub. The app only contacts GitHub when you ask it to check.",
+                12f, textFaint, false,
+            ).also { it.topPad(6) },
+        )
+        pane.addView(about)
     }
 
     private lateinit var mascotPreview: MascotPreview
@@ -964,6 +1179,7 @@ class SettingsActivity : Activity() {
     }
 
     private fun checkForUpdates() {
+        if (!::updateTitle.isInitialized) return
         if (checkingUpdate || downloadingUpdate) return
         checkingUpdate = true
         // Record the attempt immediately, so being offline cannot cause a retry storm.
@@ -1024,6 +1240,7 @@ class SettingsActivity : Activity() {
     }
 
     private fun maybeAutoCheckUpdates() {
+        if (!::updateTitle.isInitialized) return
         if (checkingUpdate || downloadingUpdate) return
         val last = options.lastUpdateCheck
         val week = 7L * 24 * 60 * 60 * 1000
@@ -1039,7 +1256,7 @@ class SettingsActivity : Activity() {
 
     // ------------------------------------------------------------- activity
 
-    private fun buildActivityPane(pane: LinearLayout) {
+    private fun buildActivityPage(pane: LinearLayout) {
         val statsCard = card()
         statsCard.addView(sectionHeader("Typing"))
         val installed = formatInstallDay()
@@ -1104,21 +1321,6 @@ class SettingsActivity : Activity() {
             },
         )
         pane.addView(statsCard)
-
-        val backup = card()
-        backup.addView(sectionHeader("Backup"))
-        backup.addView(
-            label(
-                "Settings, stats and learned words in one file protected by a password. " +
-                    "If you forget the password the file cannot be opened.",
-                12f,
-                textDim,
-                false,
-            ).also { it.topPad(8) },
-        )
-        backup.addView(pill("Export backup") { showExportDialog() })
-        backup.addView(pill("Import backup") { startImportPicker() })
-        pane.addView(backup)
     }
 
     private fun emptyLabel(): TextView = label("", 20f, textMain, true)

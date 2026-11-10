@@ -50,6 +50,9 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
     private var lastClipUri: String? = null
     private var pendingClipText: String? = null
     private var pendingClipAt = 0L
+
+    /** The last clip already offered in the toolbar, so each copy is asked about once. */
+    private var offeredClipText: String? = null
     private lateinit var prefs: KeyboardPrefs
 
     private lateinit var floatingHost: FloatingHost
@@ -58,6 +61,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
     private var hasCaret = false
     private var caretScreenX = -1f
     private var caretScreenTop = Float.NaN
+    private var caretScreenBottom = Float.NaN
     private var mascotVisibleNow = false
     private var mascotDeletingNow = false
 
@@ -175,6 +179,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         applyHostMode()
         hasCaret = false
         caretScreenTop = Float.NaN
+        caretScreenBottom = Float.NaN
         keyboardView.setOverlayMascot(false)
         currentInputConnection?.requestCursorUpdates(InputConnection.CURSOR_UPDATE_MONITOR)
         keyboardView.applySettings(options)
@@ -309,19 +314,28 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         val ic = currentInputConnection ?: return
         keyboardView.dismissCopiedChip()
         if (composing.isNotEmpty()) {
-            // Remember the typo the user is fixing, so it can be learned on commit.
-            correctedFrom = composing.toString()
-            // The composing caret sits at the end, so trim the last code point.
-            val cut = Character.charCount(composing.codePointBefore(composing.length))
-            composing.setLength(composing.length - cut)
-            if (composing.isEmpty()) {
-                ic.commitText("", 1)
-            } else {
-                ic.setComposingText(composing.toString(), 1)
+            // Only trim the composing word when the caret is still at its end. If the
+            // user tapped inside the word, the composing span is stale: commit it and
+            // delete the character at the real caret instead of the word's last letter.
+            val live = ic.getTextBeforeCursor(composing.length, 0)?.toString()
+            if (live == composing.toString()) {
+                // Remember the typo the user is fixing, so it can be learned on commit.
+                correctedFrom = composing.toString()
+                val cut = Character.charCount(composing.codePointBefore(composing.length))
+                composing.setLength(composing.length - cut)
+                if (composing.isEmpty()) {
+                    ic.commitText("", 1)
+                } else {
+                    ic.setComposingText(composing.toString(), 1)
+                }
+                refreshSuggestions()
+                updateFieldEmpty()
+                return
             }
-            refreshSuggestions()
-            updateFieldEmpty()
-            return
+            ic.finishComposingText()
+            composing.clear()
+            correctedFrom = null
+            keyboardView.setComposing(false)
         }
         val selected = ic.getSelectedText(0)
         if (selected != null && selected.isNotEmpty()) {
@@ -561,13 +575,51 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         if (info.insertionMarkerTop.isNaN()) return
         // Some apps omit the horizontal marker; keep the last known x in that case.
         val horizontal = if (info.insertionMarkerHorizontal.isNaN()) caretScreenX else info.insertionMarkerHorizontal
-        val points = floatArrayOf(horizontal, info.insertionMarkerTop)
-        info.matrix.mapPoints(points)
-        caretScreenX = points[0]
-        caretScreenTop = points[1]
+        // Map both ends of the caret line. The mascot stands beside the line, so its
+        // vertical centre should match the caret's centre, not sit under it.
+        val top = floatArrayOf(horizontal, info.insertionMarkerTop)
+        info.matrix.mapPoints(top)
+        caretScreenX = top[0]
+        caretScreenTop = top[1]
+        val bottom = if (info.insertionMarkerBottom.isNaN()) {
+            caretScreenTop
+        } else {
+            floatArrayOf(horizontal, info.insertionMarkerBottom).also { info.matrix.mapPoints(it) }[1]
+        }
+        caretScreenBottom = if (bottom.isNaN()) caretScreenTop else bottom
         hasCaret = true
         if (::keyboardView.isInitialized) keyboardView.setCaretX(caretScreenX - floatingHost.offsetX)
         updateMascotOverlay()
+    }
+
+    override fun onUpdateSelection(
+        oldSelStart: Int,
+        oldSelEnd: Int,
+        newSelStart: Int,
+        newSelEnd: Int,
+        candidatesStart: Int,
+        candidatesEnd: Int,
+    ) {
+        super.onUpdateSelection(
+            oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd,
+        )
+        if (composing.isEmpty()) return
+        // Keep the composing word only while the caret sits at its end. Moving the
+        // caret into the middle (or out of the field) must drop our cached word.
+        if (newSelStart == newSelEnd) {
+            val conn = currentInputConnection ?: return
+            val live = conn.getTextBeforeCursor(composing.length, 0)?.toString()
+                ?: return
+            if (live == composing.toString()) return
+        }
+        run {
+            composing.clear()
+            correctedFrom = null
+            if (::keyboardView.isInitialized) {
+                keyboardView.setComposing(false)
+                refreshSuggestions()
+            }
+        }
     }
 
     override fun onMascotState(visible: Boolean, deleting: Boolean) {
@@ -591,8 +643,9 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         val size = mascotOverlay.sizePx
         val offsetX = prefs.mascotOffsetX * dm.density
         val offsetY = prefs.mascotOffsetY * dm.density
-        val x = (caretScreenX + 16 * dm.density - size / 2f + offsetX).toInt()
-        val y = (caretScreenTop + 12 * dm.density - size / 2f + offsetY).toInt()
+        val x = (caretScreenX + 18 * dm.density - size / 2f + offsetX).toInt()
+        val caretCentreY = (caretScreenTop + caretScreenBottom) / 2f
+        val y = (caretCentreY - size / 2f + offsetY).toInt()
         mascotOverlay.show(x, y, mascotDeletingNow)
     }
 
@@ -656,9 +709,10 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         }
         val pending = pendingClipText ?: return
         val fresh = System.currentTimeMillis() - pendingClipAt < 10 * 60 * 1000L
-        if (fresh) {
+        if (fresh && pending != offeredClipText) {
+            offeredClipText = pending
             keyboardView.showCopiedChip(pending)
-        } else {
+        } else if (!fresh) {
             pendingClipText = null
         }
     }
@@ -669,7 +723,12 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         lastClipText = text
         if (::keyboardView.isInitialized) {
             keyboardView.refreshClipboard()
-            if (isInputViewShown) keyboardView.showCopiedChip(text)
+            // Offer each copied clip once, in the toolbar pill, instead of on every
+            // field open or after every paste.
+            if (isInputViewShown && text != offeredClipText) {
+                offeredClipText = text
+                keyboardView.showCopiedChip(text)
+            }
         }
     }
 

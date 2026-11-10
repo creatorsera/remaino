@@ -190,7 +190,7 @@ class KeyboardView(context: Context) : View(context) {
     // The action tray: a labelled two-column grid over the keys area.
     private val trayTiles = listOf(
         TrayTile("Emoji", R.drawable.ic_smile, ToolbarAction.EMOJI),
-        TrayTile("Sticker", R.drawable.ic_sticker, ToolbarAction.STICKER),
+        TrayTile("Make sticker", R.drawable.ic_sticker, ToolbarAction.STICKER),
         TrayTile("Clipboard", R.drawable.ic_clipboard, ToolbarAction.CLIPBOARD),
         TrayTile("Undo", R.drawable.ic_undo, ToolbarAction.UNDO),
         TrayTile("Redo", R.drawable.ic_redo, ToolbarAction.REDO),
@@ -660,13 +660,31 @@ class KeyboardView(context: Context) : View(context) {
         for (i in 0 until tabs) {
             targets.add(Target(RectF(left + i * tabW, top, left + (i + 1) * tabW, top + tabsH), tabIndex = i))
         }
-        val bottomH = dp(42f)
+        val bottomH = dp(46f)
         val bottomTop = top + keysHeight() - bottomH
         contentRect.set(left, top + tabsH + dp(2f), right, bottomTop - dp(2f))
-        val bw = dp(72f)
+        val bw = dp(66f)
+        val stickerW = dp(46f)
         targets.add(Target(RectF(left, bottomTop, left + bw, bottomTop + bottomH), key = abcKey))
+        // Quick ways into the sticker maker and settings, like the emoji tray's
+        // bottom row.
+        val stickerLeft = left + bw + keyGap
         targets.add(
-            Target(RectF(left + bw + keyGap, bottomTop, right - bw - keyGap, bottomTop + bottomH), key = panelSpaceKey),
+            Target(
+                RectF(stickerLeft, bottomTop, stickerLeft + stickerW, bottomTop + bottomH),
+                action = ToolbarAction.STICKER,
+            ),
+        )
+        val settingsLeft = stickerLeft + stickerW + keyGap
+        targets.add(
+            Target(
+                RectF(settingsLeft, bottomTop, settingsLeft + stickerW, bottomTop + bottomH),
+                action = ToolbarAction.SETTINGS,
+            ),
+        )
+        val spaceLeft = settingsLeft + stickerW + keyGap
+        targets.add(
+            Target(RectF(spaceLeft, bottomTop, right - bw - keyGap, bottomTop + bottomH), key = panelSpaceKey),
         )
         targets.add(Target(RectF(right - bw, bottomTop, right, bottomTop + bottomH), key = panelBackspaceKey))
         buildSheet()
@@ -1323,7 +1341,7 @@ class KeyboardView(context: Context) : View(context) {
             if (header != null) {
                 drawLeftLabel(canvas, header, contentRect.left + dp(6f), top + item.height / 2f, sp(12f), t.textDim)
             } else if (emojis != null) {
-                textPaint.textSize = sp(24f)
+                textPaint.textSize = sp(27f)
                 textPaint.color = t.text
                 for (col in emojis.indices) {
                     val cx = contentRect.left + col * cell + cell / 2f
