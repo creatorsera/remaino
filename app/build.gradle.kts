@@ -66,6 +66,10 @@ android {
 
     testOptions {
         unitTests.isIncludeAndroidResources = true
+        unitTests.all {
+            it.maxHeapSize = "1g"
+            it.jvmArgs("-XX:MaxMetaspaceSize=512m")
+        }
     }
 }
 

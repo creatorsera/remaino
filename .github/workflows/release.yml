@@ -52,7 +52,7 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           VERSION_NAME: ${{ env.VERSION_NAME }}
-        run: gradle testDebugUnitTest assembleRelease --stacktrace
+        run: ./gradlew testDebugUnitTest assembleRelease --stacktrace
 
       - name: Rename APK and create checksum
         run: |

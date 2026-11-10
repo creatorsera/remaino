@@ -14,3 +14,6 @@
 keystore.properties
 # The shared debug key is public on purpose (keeps debug APK updates working)
 !app/debug.keystore
+
+# Kotlin compiler session artifacts
+.kotlin/

@@ -52,7 +52,7 @@ class SettingsActivity : Activity() {
 
     private lateinit var stats: TypingStats
     private lateinit var options: KeyboardPrefs
-    private lateinit var rootView: LinearLayout
+    private lateinit var pageRoot: LinearLayout
     private var page = SettingsPage.HOME
 
     private lateinit var statusChip: TextView
@@ -73,11 +73,6 @@ class SettingsActivity : Activity() {
     private lateinit var updateIcon: WavyCircle
     private lateinit var updateTitle: TextView
     private lateinit var updateSub: TextView
-
-    private lateinit var tabKeyboard: TextView
-    private lateinit var tabActivity: TextView
-    private lateinit var keyboardPane: LinearLayout
-    private lateinit var activityPane: LinearLayout
 
     private lateinit var heightLabel: TextView
     private lateinit var paddingLabel: TextView
@@ -152,20 +147,24 @@ class SettingsActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Rotation and theme changes recreate the activity; stay on the same page.
+        page = savedInstanceState?.getString(KEY_PAGE)
+            ?.let { name -> SettingsPage.entries.firstOrNull { it.name == name } }
+            ?: SettingsPage.HOME
         window.statusBarColor = bg
         window.navigationBarColor = bg
         stats = TypingStats(this)
         options = KeyboardPrefs(this)
         applyPalette()
 
-        rootView = LinearLayout(this).apply {
+        pageRoot = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(10), dp(20), dp(28))
         }
         val scroll = ScrollView(this).apply {
             setBackgroundColor(bg)
             clipToPadding = false
-            addView(rootView)
+            addView(pageRoot)
         }
         setContentView(scroll)
         ViewCompat.setOnApplyWindowInsetsListener(scroll) { v, insets ->
@@ -178,52 +177,52 @@ class SettingsActivity : Activity() {
 
     /** Rebuilds the visible settings page. Pages are layers, so Back returns home. */
     private fun renderPage() {
-        rootView.removeAllViews()
+        pageRoot.removeAllViews()
         when (page) {
             SettingsPage.HOME -> {
-                rootView.addView(topBar())
-                rootView.addView(hero())
-                buildHome(rootView)
+                pageRoot.addView(topBar())
+                pageRoot.addView(hero())
+                buildHome(pageRoot)
             }
             SettingsPage.ACTIVITY -> {
-                rootView.addView(pageHeader("Activity"))
-                buildActivityPage(rootView)
+                pageRoot.addView(pageHeader("Activity"))
+                buildActivityPage(pageRoot)
             }
             SettingsPage.APPEARANCE -> {
-                rootView.addView(pageHeader("Appearance"))
-                buildAppearancePage(rootView)
+                pageRoot.addView(pageHeader("Appearance"))
+                buildAppearancePage(pageRoot)
             }
             SettingsPage.KEYBOARD -> {
-                rootView.addView(pageHeader("Keyboard & keys"))
-                buildKeyboardPage(rootView)
+                pageRoot.addView(pageHeader("Keyboard & keys"))
+                buildKeyboardPage(pageRoot)
             }
             SettingsPage.REO -> {
-                rootView.addView(pageHeader("Reo the mascot"))
-                buildReoPage(rootView)
+                pageRoot.addView(pageHeader("Reo the mascot"))
+                buildReoPage(pageRoot)
             }
             SettingsPage.TYPING -> {
-                rootView.addView(pageHeader("Typing & suggestions"))
-                buildTypingPage(rootView)
+                pageRoot.addView(pageHeader("Typing & suggestions"))
+                buildTypingPage(pageRoot)
             }
             SettingsPage.CLIPBOARD -> {
-                rootView.addView(pageHeader("Clipboard"))
-                buildClipboardPage(rootView)
+                pageRoot.addView(pageHeader("Clipboard"))
+                buildClipboardPage(pageRoot)
             }
             SettingsPage.PRIVACY -> {
-                rootView.addView(pageHeader("Privacy"))
-                buildPrivacyPage(rootView)
+                pageRoot.addView(pageHeader("Privacy"))
+                buildPrivacyPage(pageRoot)
             }
             SettingsPage.SETUP -> {
-                rootView.addView(pageHeader("Set up"))
-                buildSetupPage(rootView)
+                pageRoot.addView(pageHeader("Set up"))
+                buildSetupPage(pageRoot)
             }
             SettingsPage.DATA -> {
-                rootView.addView(pageHeader("Backup & data"))
-                buildDataPage(rootView)
+                pageRoot.addView(pageHeader("Backup & data"))
+                buildDataPage(pageRoot)
             }
             SettingsPage.UPDATES -> {
-                rootView.addView(pageHeader("Updates"))
-                buildUpdatesPage(rootView)
+                pageRoot.addView(pageHeader("Updates"))
+                buildUpdatesPage(pageRoot)
             }
         }
         refreshPageData()
@@ -233,6 +232,11 @@ class SettingsActivity : Activity() {
     private fun openPage(target: SettingsPage) {
         page = target
         renderPage()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(KEY_PAGE, page.name)
+        super.onSaveInstanceState(outState)
     }
 
     override fun onBackPressed() {
@@ -279,7 +283,9 @@ class SettingsActivity : Activity() {
         if (::todayValue.isInitialized) {
             todayValue.text = String.format(Locale.getDefault(), "%,d", stats.todayWords())
         }
-        if (::chart.isInitialized || ::spark.isInitialized) refreshStats()
+        // The full stats block only exists on the Activity page; the home hero
+        // needs just the today count set above.
+        if (::chart.isInitialized) refreshStats()
         if (::clipPreview.isInitialized) refreshClipboardPreview()
         if (::updateTitle.isInitialized) refreshUpdateState()
     }
@@ -1415,26 +1421,6 @@ class SettingsActivity : Activity() {
         }
     }
 
-    private fun showTab(keyboard: Boolean) {
-        keyboardPane.visibility = if (keyboard) View.VISIBLE else View.GONE
-        activityPane.visibility = if (keyboard) View.GONE else View.VISIBLE
-        tabKeyboard.background = tabBackground(keyboard)
-        tabActivity.background = tabBackground(!keyboard)
-        tabKeyboard.setTextColor(if (keyboard) onLime else textDim)
-        tabActivity.setTextColor(if (!keyboard) onLime else textDim)
-    }
-
-    private fun tabBackground(selected: Boolean) =
-        if (selected) roundRect(lime, 999) else null
-
-    private fun tab(name: String, selected: Boolean): TextView =
-        label(name, 13f, if (selected) onLime else textDim, true).apply {
-            gravity = Gravity.CENTER
-            setPadding(0, dp(10), 0, dp(10))
-            background = tabBackground(selected)
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-
     // ------------------------------------------------------------- backup
 
     private fun passwordField(hintText: String): EditText = EditText(this).apply {
@@ -1808,6 +1794,7 @@ class SettingsActivity : Activity() {
     private companion object {
         const val REQ_EXPORT = 1
         const val REQ_IMPORT = 2
+        const val KEY_PAGE = "settings_page"
     }
 }
 
