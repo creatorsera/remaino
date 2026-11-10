@@ -283,9 +283,9 @@ class SettingsActivity : Activity() {
         if (::todayValue.isInitialized) {
             todayValue.text = String.format(Locale.getDefault(), "%,d", stats.todayWords())
         }
-        // The full stats block only exists on the Activity page; the home hero
-        // needs just the today count set above.
-        if (::chart.isInitialized) refreshStats()
+        // Home has the hero count and sparkline; the Activity page has the full
+        // block. Each is refreshed only when it is on screen.
+        if (::chart.isInitialized || ::spark.isInitialized) refreshStats()
         if (::clipPreview.isInitialized) refreshClipboardPreview()
         if (::updateTitle.isInitialized) refreshUpdateState()
     }
@@ -1342,15 +1342,33 @@ class SettingsActivity : Activity() {
     private fun refreshStats() {
         val locale = Locale.getDefault()
         val total = stats.totalWords()
-        todayValue.text = String.format(locale, "%,d", stats.todayWords())
-        totalValue.text = String.format(locale, "%,d words", total)
-        booksValue.text = String.format(locale, "%.1f books", StatsMath.books(total))
-        streakValue.text = String.format(locale, "%d days", stats.streak())
-        bestValue.text = String.format(locale, "%,d", stats.bestDay())
-        averageValue.text = String.format(locale, "%,d", stats.averagePerActiveDay())
-        chart.labels = lastSevenLabels()
-        chart.values = stats.lastDays(7).reversed()
-        spark.values = stats.lastDays(7).reversed().map { it.toFloat() }
+        // Home and the Activity page exist one at a time, so guard every widget.
+        if (::todayValue.isInitialized) {
+            todayValue.text = String.format(locale, "%,d", stats.todayWords())
+        }
+        if (::totalValue.isInitialized) {
+            totalValue.text = String.format(locale, "%,d words", total)
+        }
+        if (::booksValue.isInitialized) {
+            booksValue.text = String.format(locale, "%.1f books", StatsMath.books(total))
+        }
+        if (::streakValue.isInitialized) {
+            streakValue.text = String.format(locale, "%d days", stats.streak())
+        }
+        if (::bestValue.isInitialized) {
+            bestValue.text = String.format(locale, "%,d", stats.bestDay())
+        }
+        if (::averageValue.isInitialized) {
+            averageValue.text = String.format(locale, "%,d", stats.averagePerActiveDay())
+        }
+        val week = stats.lastDays(7).reversed()
+        if (::chart.isInitialized) {
+            chart.labels = lastSevenLabels()
+            chart.values = week
+        }
+        if (::spark.isInitialized) {
+            spark.values = week.map { it.toFloat() }
+        }
     }
 
     private fun lastSevenLabels(): List<String> {
