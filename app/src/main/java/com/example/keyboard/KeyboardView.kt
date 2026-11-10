@@ -28,7 +28,7 @@ import kotlin.math.sin
 enum class ShiftState { OFF, ONE_SHOT, CAPS }
 
 enum class ToolbarAction {
-    MENU, CLOSE, MIC, EMOJI, CLIPBOARD, THEME, LANGUAGE, SETTINGS, BACK, CLIP_PAUSE, CLIP_CLEAR, COPY_PASTE,
+    MENU, CLOSE, MIC, EMOJI, CLIPBOARD, THEME, LANGUAGE, SETTINGS, BACK, CLIP_PAUSE, CLIP_CLEAR, CLIP_EDIT, COPY_PASTE,
     UNDO, REDO, STICKER, STICKER_STYLE, STICKER_FONT, STICKER_SEND,
 }
 
@@ -77,8 +77,9 @@ class KeyboardView(context: Context) : View(context) {
         val hint: String? = null,
     )
 
-    private class ClipRow(
-        val x: Float,
+    private class ClipCard(
+        val left: Float,
+        val top: Float,
         val width: Float,
         val height: Float,
         val item: ClipItem? = null,
@@ -172,11 +173,10 @@ class KeyboardView(context: Context) : View(context) {
 
     // Clipboard list
     private val clipStore = ClipboardStore.get(context)
-    private var clipRows: List<ClipRow> = emptyList()
-    private var clipHeight = 0f
-    private var clipScrollX = 0f
-    private var clipCardW = 0f
-    private val clipHeaderH = dp(38f)
+    private var clipCards: List<ClipCard> = emptyList()
+    private var clipContentH = 0f
+    private var clipScrollY = 0f
+    private var clipEditMode = false
 
     private val abcKey = Key("ABC", KeyType.LETTERS)
     private val panelSpaceKey = Key("", KeyType.SPACE)
@@ -289,6 +289,7 @@ class KeyboardView(context: Context) : View(context) {
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         rebuildTargets()
+        if (panel == Panel.CLIPBOARD) reloadClipboard()
     }
 
     override fun onDetachedFromWindow() {
@@ -439,7 +440,7 @@ class KeyboardView(context: Context) : View(context) {
         if (panel == Panel.CLIPBOARD) {
             targets.add(Target(leftRect, action = ToolbarAction.BACK))
             val pauseCx = w - dp(68f)
-            val clearCx = w - dp(28f)
+            val editCx = w - dp(28f)
             targets.add(
                 Target(
                     RectF(pauseCx - dp(22f), cy - dp(22f), pauseCx + dp(22f), cy + dp(22f)),
@@ -448,8 +449,8 @@ class KeyboardView(context: Context) : View(context) {
             )
             targets.add(
                 Target(
-                    RectF(clearCx - dp(22f), cy - dp(22f), clearCx + dp(22f), cy + dp(22f)),
-                    action = ToolbarAction.CLIP_CLEAR,
+                    RectF(editCx - dp(22f), cy - dp(22f), editCx + dp(22f), cy + dp(22f)),
+                    action = ToolbarAction.CLIP_EDIT,
                 ),
             )
             val top = keysTop()
@@ -662,43 +663,57 @@ class KeyboardView(context: Context) : View(context) {
         if (sensitive) return
         panel = Panel.CLIPBOARD
         scrollY = 0f
-        clipScrollX = 0f
+        clipScrollY = 0f
+        clipEditMode = false
         rebuildTargets()
         reloadClipboard()
         invalidate()
     }
 
     private fun reloadClipboard() {
-        val items = clipStore.items().sortedByDescending { it.pinned }
-        val rows = ArrayList<ClipRow>()
-        val gap = dp(8f)
-        val cardH = if (contentRect.height() > 0f) {
-            (contentRect.height() - clipHeaderH - dp(8f)).coerceIn(dp(90f), dp(104f))
-        } else {
-            dp(96f)
+        if (contentRect.width() <= 0f || contentRect.height() <= 0f) {
+            clipCards = emptyList()
+            clipContentH = 0f
+            return
         }
-        clipCardW = (contentRect.width() * 0.66f).coerceAtMost(dp(220f))
+        val items = clipStore.items().sortedByDescending { it.pinned }
+        val cards = ArrayList<ClipCard>()
+        val pad = dp(2f)
+        val gap = dp(8f)
+        val topPad = dp(6f)
+        val availW = (contentRect.width() - pad * 2f).coerceAtLeast(dp(80f))
+        val colW = (availW - gap) / 2f
+        // Four rows visible, like the reference, and a little taller on big screens.
+        val cardH = ((contentRect.height() - topPad - gap * 3f) / 4.15f)
+            .coerceIn(dp(52f), dp(78f))
+
         if (items.isEmpty()) {
             val msg = if (clipStore.paused) "Clipboard history is paused" else "Copied text appears here"
-            rows.add(ClipRow(0f, contentRect.width(), cardH, hint = msg))
-            clipHeight = cardH
+            cards.add(ClipCard(pad, topPad, availW, cardH, hint = msg))
+            clipContentH = topPad + cardH
         } else {
-            var x = 0f
-            for (item in items) {
-                rows.add(ClipRow(x, clipCardW, cardH, item = item))
-                x += clipCardW + gap
+            // Column-major: the left column fills first, the right column is staggered.
+            val leftCount = (items.size + 1) / 2
+            var y = topPad
+            for (i in 0 until leftCount) {
+                cards.add(ClipCard(pad, y, colW, cardH, item = items[i]))
+                y += cardH + gap
             }
-            clipHeight = cardH
+            val leftH = if (leftCount > 0) y - gap else 0f
+
+            var ry = topPad + (cardH + gap) / 3f
+            for (i in leftCount until items.size) {
+                cards.add(ClipCard(pad + colW + gap, ry, colW, cardH, item = items[i]))
+                ry += cardH + gap
+            }
+            val rightH = if (items.size > leftCount) ry - gap else 0f
+            clipContentH = max(leftH, rightH)
         }
-        clipRows = rows
-        clipScrollX = clipScrollX.coerceIn(0f, max(0f, totalClipWidth() - contentRect.width()))
+        clipCards = cards
+        clipScrollY = clipScrollY.coerceIn(0f, max(0f, clipContentH + dp(4f) - contentRect.height()))
     }
 
-    private fun totalClipWidth(): Float {
-        if (clipRows.isEmpty()) return contentRect.width()
-        val last = clipRows.last()
-        return last.x + last.width
-    }
+    private fun maxClipScroll(): Float = max(0f, clipContentH + dp(4f) - contentRect.height())
 
     /** "just now", "12m ago", "3h ago", "2d ago". */
     private fun relativeTime(time: Long): String {
@@ -729,36 +744,32 @@ class KeyboardView(context: Context) : View(context) {
 
     private fun tapClip(x: Float, y: Float) {
         if (!contentRect.contains(x, y)) return
-        if (y < contentRect.top + clipHeaderH) {
-            // "Clear" lives in the sheet header.
-            if (x > contentRect.right - dp(90f)) {
-                clipStore.clearUnpinned()
-                clipScrollX = 0f
-                reloadClipboard()
-                invalidate()
-            }
-            return
-        }
-        val cardTop = contentRect.top + clipHeaderH + dp(4f)
-        if (y < cardTop || y > cardTop + clipHeight) return
-        val localX = x - contentRect.left + clipScrollX
-        val row = clipRows.firstOrNull { localX >= it.x && localX < it.x + it.width } ?: return
-        val item = row.item ?: return
-        val cardLeft = contentRect.left + row.x - clipScrollX
-        val rx = x - cardLeft
-        val ry = y - cardTop
+        val localX = x - contentRect.left
+        val localY = y - contentRect.top + clipScrollY
+        val card = clipCards.firstOrNull {
+            localX >= it.left && localX < it.left + it.width &&
+                localY >= it.top && localY < it.top + it.height
+        } ?: return
+        val item = card.item ?: return
         Feedback.tap(this, prefs)
-        when {
-            rx < dp(34f) && ry < dp(36f) -> {
-                clipStore.remove(item)
-                reloadClipboard()
+        if (clipEditMode) {
+            val rx = localX - card.left
+            val fromTop = localY - card.top
+            val fromBottom = card.top + card.height - localY
+            when {
+                rx > card.width - dp(34f) && fromTop < dp(34f) -> {
+                    clipStore.remove(item)
+                    reloadClipboard()
+                }
+                rx > card.width - dp(34f) && fromBottom < dp(34f) -> {
+                    clipStore.togglePin(item)
+                    reloadClipboard()
+                }
             }
-            rx > row.width - dp(34f) && ry < dp(36f) -> {
-                clipStore.togglePin(item)
-                reloadClipboard()
-            }
-            item.image == null -> listener?.onPaste(item.text)
-            else -> listener?.onPasteImage(item)
+        } else if (item.image == null) {
+            listener?.onPaste(item.text)
+        } else {
+            listener?.onPasteImage(item)
         }
         invalidate()
     }
@@ -1146,7 +1157,7 @@ class KeyboardView(context: Context) : View(context) {
             action == ToolbarAction.CLOSE ||
             action == ToolbarAction.BACK ||
             action == ToolbarAction.CLIP_PAUSE ||
-            action == ToolbarAction.CLIP_CLEAR ||
+            action == ToolbarAction.CLIP_EDIT ||
             (action == ToolbarAction.MIC && !trayOpen)
         val pressed = isPressed(tg)
         if (circular || pressed) {
@@ -1165,6 +1176,7 @@ class KeyboardView(context: Context) : View(context) {
             ToolbarAction.BACK -> R.drawable.ic_back
             ToolbarAction.CLIP_PAUSE -> if (clipStore.paused) R.drawable.ic_play else R.drawable.ic_pause
             ToolbarAction.CLIP_CLEAR -> R.drawable.ic_trash
+            ToolbarAction.CLIP_EDIT -> if (clipEditMode) R.drawable.ic_trash else R.drawable.ic_edit
             ToolbarAction.UNDO -> R.drawable.ic_undo
             ToolbarAction.REDO -> R.drawable.ic_redo
             ToolbarAction.COPY_PASTE -> R.drawable.ic_clipboard
@@ -1233,76 +1245,76 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     private fun drawClipboardList(canvas: Canvas, t: KeyboardTheme) {
-        clipScrollX = clipScrollX.coerceIn(0f, max(0f, totalClipWidth() - contentRect.width()))
-        scrollY = 0f
-
+        clipScrollY = clipScrollY.coerceIn(0f, maxClipScroll())
         canvas.save()
         canvas.clipRect(contentRect)
 
-        // Sheet header
-        val headerCy = contentRect.top + clipHeaderH / 2f
-        drawLeftLabel(canvas, "Clipboard", contentRect.left + dp(6f), headerCy, sp(13f), t.text)
-        val pinnedCount = clipRows.count { it.item?.pinned == true }
-        val clearable = clipRows.count { it.item != null && !it.item.pinned }
-        if (clearable > 0) {
-            drawLeftLabel(
-                canvas, "Clear",
-                contentRect.right - dp(80f), headerCy, sp(12f),
-                if (pinnedCount > 0) t.textDim else t.accent,
-            )
-        }
-
-        val cardTop = contentRect.top + clipHeaderH + dp(4f)
-        for (row in clipRows) {
-            val left = contentRect.left + row.x - clipScrollX
-            if (left + row.width < contentRect.left - dp(8f) || left > contentRect.right + dp(8f)) continue
-            val item = row.item
-            val hint = row.hint
-            if (item != null) {
-                tmpRect.set(left, cardTop, left + row.width, cardTop + row.height)
-                fill.color = t.card
-                canvas.drawRoundRect(tmpRect, dp(12f), dp(12f), fill)
-                if (item.pinned) {
-                    clipStroke.color = t.accent
-                    clipStroke.strokeWidth = dp(1f)
-                    tmpRect.inset(dp(1f), dp(1f))
-                    canvas.drawRoundRect(tmpRect, dp(11f), dp(11f), clipStroke)
-                    tmpRect.inset(-dp(1f), -dp(1f))
+        for (card in clipCards) {
+            val left = contentRect.left + card.left
+            val top = contentRect.top + card.top - clipScrollY
+            if (top + card.height < contentRect.top - dp(4f) || top > contentRect.bottom + dp(4f)) continue
+            val item = card.item
+            val hint = card.hint
+            if (item == null) {
+                if (hint != null) {
+                    drawLabel(canvas, hint, contentRect.centerX(), top + card.height / 2f, sp(13f), t.textDim)
                 }
+                continue
+            }
 
-                // Delete on left, pin on right
-                drawIcon(canvas, R.drawable.ic_close, tmpRect.left + dp(8f), tmpRect.top + dp(8f), dp(12f), t.textDim)
+            tmpRect.set(left, top, left + card.width, top + card.height)
+            fill.color = t.card
+            canvas.drawRoundRect(tmpRect, dp(14f), dp(14f), fill)
+            if (item.pinned) {
+                clipStroke.color = t.accent
+                clipStroke.strokeWidth = dp(1f)
+                tmpRect.inset(dp(1f), dp(1f))
+                canvas.drawRoundRect(tmpRect, dp(13f), dp(13f), clipStroke)
+                tmpRect.inset(-dp(1f), -dp(1f))
+            }
+
+            var textLeft = tmpRect.left + dp(11f)
+            val textRight = tmpRect.right - (if (clipEditMode) dp(34f) else dp(11f))
+            if (item.image != null) {
+                val thumb = thumbnailFor(item)
+                if (thumb != null) {
+                    val side = dp(30f)
+                    tmpRectThumb.set(
+                        textLeft, tmpRect.centerY() - side / 2f,
+                        textLeft + side, tmpRect.centerY() + side / 2f,
+                    )
+                    canvas.save()
+                    path.reset()
+                    path.addRoundRect(tmpRectThumb, dp(7f), dp(7f), Path.Direction.CW)
+                    canvas.clipPath(path)
+                    canvas.drawBitmap(thumb, null as android.graphics.Rect?, tmpRectThumb, imagePaint)
+                    canvas.restore()
+                    textLeft = tmpRectThumb.right + dp(8f)
+                }
+            }
+
+            textPaint.textSize = sp(12.5f)
+            textPaint.color = t.text
+            textPaint.textAlign = Paint.Align.LEFT
+            val visible = if (item.image != null) "Image" else item.text.replace("\n", " ")
+            val maxW = (textRight - textLeft).coerceAtLeast(dp(16f))
+            val lines = wrapTwoLines(visible, maxW)
+            val lineH = textPaint.descent() - textPaint.ascent()
+            var baseline = tmpRect.centerY() - (lineH * lines.size) / 2f - textPaint.ascent()
+            for (line in lines) {
+                canvas.drawText(line, textLeft, baseline, textPaint)
+                baseline += lineH
+            }
+
+            if (clipEditMode) {
+                val iconCx = tmpRect.right - dp(16f)
+                drawIcon(canvas, R.drawable.ic_close, iconCx, tmpRect.top + dp(16f), dp(14f), t.textDim)
                 val pinColor = if (item.pinned) t.accent else t.textDim
                 drawIcon(
                     canvas,
                     if (item.pinned) R.drawable.ic_pin_filled else R.drawable.ic_pin,
-                    tmpRect.right - dp(12f), tmpRect.top + dp(8f), dp(12f), pinColor,
+                    iconCx, tmpRect.bottom - dp(16f), dp(14f), pinColor,
                 )
-
-                // Text snippet below icons
-                var textLeft = tmpRect.left + dp(8f)
-                val textTop = tmpRect.top + dp(24f)
-                val textRight = tmpRect.right - dp(8f)
-                textPaint.textSize = sp(11f)
-                textPaint.color = t.text
-                textPaint.textAlign = Paint.Align.LEFT
-                val maxW = (textRight - textLeft).coerceAtLeast(dp(16f))
-                val visible = if (item.image != null) "Image" else item.text.replace("\n", " ")
-                val lines = wrapTwoLines(visible, maxW)
-                var baseline = textTop - (textPaint.descent() + textPaint.ascent()) / 2f
-                for (line in lines) {
-                    canvas.drawText(line, textLeft, baseline, textPaint)
-                    baseline += textPaint.descent() - textPaint.ascent()
-                }
-
-                // Time above
-                textPaint.textSize = sp(9f)
-                textPaint.color = t.textDim
-                drawLeftLabel(canvas, relativeTime(item.time), tmpRect.left + dp(8f), tmpRect.top + dp(16f), sp(9f), t.textDim)
-
-                // No Paste pill
-            } else if (hint != null) {
-                drawLabel(canvas, hint, contentRect.centerX(), cardTop + row.height / 2f, sp(12f), t.textDim)
             }
         }
         canvas.restore()
@@ -1490,15 +1502,13 @@ class KeyboardView(context: Context) : View(context) {
                         val x = event.getX(idx)
                         val y = event.getY(idx)
                         if (panel == Panel.CLIPBOARD) {
-                            if (!gridMoved && abs(x - gridDownX) > touchSlop) gridMoved = true
+                            if (!gridMoved && abs(y - gridDownY) > touchSlop) gridMoved = true
                             if (gridMoved) {
-                                clipScrollX -= x - gridLastX
-                                clipScrollX = clipScrollX.coerceIn(
-                                    0f, max(0f, totalClipWidth() - contentRect.width()),
-                                )
+                                clipScrollY = (clipScrollY + gridLastY - y)
+                                    .coerceIn(0f, maxClipScroll())
                                 invalidate()
                             }
-                            gridLastX = x
+                            gridLastY = y
                         } else {
                             if (!gridMoved && abs(y - gridDownY) > touchSlop) gridMoved = true
                             if (gridMoved) {
@@ -1658,9 +1668,15 @@ class KeyboardView(context: Context) : View(context) {
                 reloadClipboard()
                 invalidate()
             }
-            ToolbarAction.CLIP_CLEAR -> {
-                clipStore.clearUnpinned()
-                scrollY = 0f
+            ToolbarAction.CLIP_EDIT -> {
+                if (clipEditMode) {
+                    // The pencil becomes a bin: tapping it clears the unpinned clips.
+                    clipStore.clearUnpinned()
+                    clipScrollY = 0f
+                    clipEditMode = false
+                } else {
+                    clipEditMode = true
+                }
                 reloadClipboard()
                 invalidate()
             }
