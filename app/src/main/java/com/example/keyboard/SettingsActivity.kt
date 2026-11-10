@@ -9,6 +9,7 @@ import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -193,6 +194,11 @@ class SettingsActivity : Activity() {
         buildActivityPane(activityPane)
         root.addView(keyboardPane)
         root.addView(activityPane)
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (options.appearance == Appearance.SYSTEM) recreate()
     }
 
     override fun onResume() {
@@ -976,6 +982,7 @@ class SettingsActivity : Activity() {
             runOnUiThread {
                 checkingUpdate = false
                 updateIcon.stop()
+                if (release != null) updateIcon.showDone()
                 latestRelease = null
                 when {
                     release == null -> {
@@ -1657,8 +1664,21 @@ private class WavyCircle(context: Context) : View(context) {
     private var phase = 0f
     private var animator: ValueAnimator? = null
 
+    /** Draws a tick instead of the ring for a moment after a successful check. */
+    var done = false
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    fun showDone() {
+        done = true
+        postDelayed({ done = false }, 1600L)
+    }
+
     fun start() {
         if (animator != null) return
+        done = false
         animator = ValueAnimator.ofFloat(0f, (2 * Math.PI).toFloat()).apply {
             duration = 1100L
             repeatCount = ValueAnimator.INFINITE

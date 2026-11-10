@@ -74,3 +74,23 @@ class SuggestionEngineTypoTest {
         assertEquals("hello", engine.suggest("helo").first())
     }
 }
+
+class AppearanceTest {
+    @Test
+    fun autoFollowsTheSystem() {
+        assertEquals(KeyboardTheme.Light, Appearance.SYSTEM.theme(systemDark = false))
+        assertEquals(KeyboardTheme.Dark, Appearance.SYSTEM.theme(systemDark = true))
+    }
+
+    @Test
+    fun explicitChoicesIgnoreTheSystem() {
+        assertEquals(KeyboardTheme.Light, Appearance.LIGHT.theme(systemDark = true))
+        assertEquals(KeyboardTheme.Dark, Appearance.DARK.theme(systemDark = false))
+    }
+
+    @Test
+    fun unknownValuesFallBackToAuto() {
+        assertEquals(Appearance.SYSTEM, Appearance.from("sepia"))
+        assertEquals(Appearance.DARK, Appearance.from("dark"))
+    }
+}

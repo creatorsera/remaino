@@ -481,6 +481,15 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
                 prefs.floatingKeyboard = !prefs.floatingKeyboard
                 applyHostMode()
             }
+            ToolbarAction.THEME -> {
+                // Cycle Auto -> Light -> Dark, then redraw the keyboard in place.
+                prefs.appearance = when (prefs.appearance) {
+                    Appearance.SYSTEM -> Appearance.LIGHT
+                    Appearance.LIGHT -> Appearance.DARK
+                    Appearance.DARK -> Appearance.SYSTEM
+                }
+                keyboardView.applySettings(prefs)
+            }
             ToolbarAction.HIDE -> requestHideSelf(0)
             ToolbarAction.DELETE_WORD -> onDeleteWord()
             ToolbarAction.MENU, ToolbarAction.CLOSE -> Unit

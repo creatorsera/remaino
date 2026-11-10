@@ -196,8 +196,8 @@ class KeyboardView(context: Context) : View(context) {
         TrayTile("Redo", R.drawable.ic_redo, ToolbarAction.REDO),
         TrayTile("Settings", R.drawable.ic_sliders, ToolbarAction.SETTINGS),
         TrayTile("Language", R.drawable.ic_globe, ToolbarAction.LANGUAGE),
-        TrayTile("Floating", R.drawable.ic_grid, ToolbarAction.FLOATING),
-        TrayTile("Delete word", R.drawable.ic_backspace, ToolbarAction.DELETE_WORD),
+        TrayTile("Floating", R.drawable.ic_floating, ToolbarAction.FLOATING),
+        TrayTile("Delete word", R.drawable.ic_delete_word, ToolbarAction.DELETE_WORD),
         TrayTile("Hide", R.drawable.ic_close, ToolbarAction.HIDE),
     )
     private val trayPerPage = 6
@@ -1273,8 +1273,8 @@ class KeyboardView(context: Context) : View(context) {
             ToolbarAction.STICKER_STYLE -> R.drawable.ic_theme
             ToolbarAction.STICKER_FONT -> R.drawable.ic_text
             ToolbarAction.STICKER_SEND -> R.drawable.ic_send
-            ToolbarAction.FLOATING -> R.drawable.ic_grid
-            ToolbarAction.DELETE_WORD -> R.drawable.ic_backspace
+            ToolbarAction.FLOATING -> R.drawable.ic_floating
+            ToolbarAction.DELETE_WORD -> R.drawable.ic_delete_word
             ToolbarAction.HIDE -> R.drawable.ic_close
             ToolbarAction.TRAY_PREV, ToolbarAction.TRAY_NEXT -> R.drawable.ic_back
         }
