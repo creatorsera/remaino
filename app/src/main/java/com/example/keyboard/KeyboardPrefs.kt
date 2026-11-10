@@ -16,6 +16,25 @@ enum class MascotPlacement(val key: String) {
     }
 }
 
+/** Light, dark, or following the system setting. */
+enum class Appearance(val key: String, val label: String) {
+    SYSTEM("system", "Auto"),
+    LIGHT("light", "Light"),
+    DARK("dark", "Dark");
+
+    /** The theme to draw, given whether the system is currently in dark mode. */
+    fun theme(systemDark: Boolean): KeyboardTheme = when (this) {
+        SYSTEM -> if (systemDark) KeyboardTheme.Dark else KeyboardTheme.Light
+        LIGHT -> KeyboardTheme.Light
+        DARK -> KeyboardTheme.Dark
+    }
+
+    companion object {
+        fun from(value: String?): Appearance =
+            entries.firstOrNull { it.key == value } ?: SYSTEM
+    }
+}
+
 /** Reo's coat colours. The face always uses a dark ink so every coat stays readable. */
 enum class MascotColor(val key: String, val label: String, val body: Int, val ink: Int) {
     LIME("lime", "Lime", 0xFFC8F26A.toInt(), 0xFF0A0A0B.toInt()),
@@ -55,6 +74,11 @@ class KeyboardPrefs(context: Context) {
     var keyPreview: Boolean
         get() = prefs.getBoolean(KEY_PREVIEW, false)
         set(value) { prefs.edit().putBoolean(KEY_PREVIEW, value).apply() }
+
+    /** Light, dark, or follow the phone. */
+    var appearance: Appearance
+        get() = Appearance.from(prefs.getString(KEY_APPEARANCE, null))
+        set(value) { prefs.edit().putString(KEY_APPEARANCE, value.key).apply() }
 
     /** The little mascot that keeps the caret company. */
     var mascot: Boolean
@@ -192,6 +216,7 @@ class KeyboardPrefs(context: Context) {
     fun exportData(): JSONObject = JSONObject()
         .put("numberRow", showNumberRow)
         .put("keyPreview", keyPreview)
+        .put("appearance", appearance.key)
         .put("mascot", mascot)
         .put("mascotPlacement", mascotPlacement.key)
         .put("mascotColor", mascotColor.key)
@@ -217,6 +242,7 @@ class KeyboardPrefs(context: Context) {
     fun importData(json: JSONObject) {
         if (json.has("numberRow")) showNumberRow = json.optBoolean("numberRow")
         if (json.has("keyPreview")) keyPreview = json.optBoolean("keyPreview")
+        if (json.has("appearance")) appearance = Appearance.from(json.optString("appearance"))
         if (json.has("mascot")) mascot = json.optBoolean("mascot")
         if (json.has("mascotPlacement")) {
             mascotPlacement = MascotPlacement.from(json.optString("mascotPlacement"))
@@ -300,6 +326,7 @@ class KeyboardPrefs(context: Context) {
         const val KEY_VERSION = "settings_version"
         const val KEY_NUMBER_ROW = "number_row"
         const val KEY_PREVIEW = "key_preview"
+        const val KEY_APPEARANCE = "appearance"
         const val KEY_MASCOT = "mascot"
         const val KEY_MASCOT_PLACEMENT = "mascot_placement"
         const val KEY_MASCOT_COLOR = "mascot_color"

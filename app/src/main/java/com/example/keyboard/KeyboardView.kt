@@ -1,6 +1,7 @@
 package com.example.keyboard
 
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -341,6 +342,18 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
+    private var appearance = Appearance.SYSTEM
+
+    private fun systemIsDark(): Boolean =
+        (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // "Auto" follows the phone without waiting for the next settings change.
+        if (appearance == Appearance.SYSTEM) theme = appearance.theme(systemIsDark())
+    }
+
     fun applySettings(options: KeyboardPrefs) {
         val oldScale = heightScale
         val oldPad = extraBottomPad
@@ -357,6 +370,8 @@ class KeyboardView(context: Context) : View(context) {
         extraBottomPad = options.keyboardPadding
         placement = options.mascotPlacement
         showNumberRow = options.showNumberRow
+        appearance = options.appearance
+        theme = appearance.theme(systemIsDark())
 
         val layoutChanged = oldPlacement != placement || oldNumberRow != showNumberRow ||
             oldScale != heightScale || oldPad != extraBottomPad || oldMascot != mascotEnabled

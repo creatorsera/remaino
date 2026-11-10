@@ -6,6 +6,7 @@ import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
+import android.content.res.Configuration
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
@@ -74,6 +75,7 @@ class SettingsActivity : Activity() {
     private lateinit var heightLabel: TextView
     private lateinit var paddingLabel: TextView
     private val mascotChips = ArrayList<TextView>()
+    private val appearanceChips = ArrayList<TextView>()
     private var floatingSwitch: Switch? = null
 
     private var checkingUpdate = false
@@ -85,18 +87,61 @@ class SettingsActivity : Activity() {
     private var pendingImport: ByteArray? = null
     private var pendingIncludeClipboard = false
 
-    private val bg = 0xFF0A0A0B.toInt()
-    private val surface = 0xFF151518.toInt()
-    private val surfaceLow = 0xFF141417.toInt()
-    private val surfaceHigh = 0xFF232329.toInt()
-    private val raised = 0xFF1F1F24.toInt()
-    private val hair = 0xFF2A2A30.toInt()
-    private val outline = 0xFF2C2C33.toInt()
-    private val textMain = 0xFFF2F2F5.toInt()
-    private val textDim = 0xFF94949E.toInt()
-    private val textFaint = 0xFF63636C.toInt()
-    private val lime = 0xFFC8F26A.toInt()
-    private val onLime = 0xFF0A0A0B.toInt()
+    private var bg = 0xFF0A0A0B.toInt()
+    private var surface = 0xFF151518.toInt()
+    private var surfaceLow = 0xFF141417.toInt()
+    private var surfaceHigh = 0xFF232329.toInt()
+    private var raised = 0xFF1F1F24.toInt()
+    private var hair = 0xFF2A2A30.toInt()
+    private var outline = 0xFF2C2C33.toInt()
+    private var textMain = 0xFFF2F2F5.toInt()
+    private var textDim = 0xFF94949E.toInt()
+    private var textFaint = 0xFF63636C.toInt()
+    private var lime = 0xFFC8F26A.toInt()
+    private var onLime = 0xFF0A0A0B.toInt()
+
+    /** Lime used as text or a thin stroke; darker on paper so it stays legible. */
+    private var signalInk = 0xFFC8F26A.toInt()
+
+    /** True when the screen is drawn on the light "Paper" palette. */
+    private var lightMode = false
+
+    private fun isSystemDark(): Boolean =
+        (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+
+    private fun applyPalette() {
+        lightMode = options.appearance.theme(isSystemDark()) === KeyboardTheme.Light
+        if (lightMode) {
+            bg = 0xFFF6F5F1.toInt()
+            surface = 0xFFFFFFFF.toInt()
+            surfaceLow = 0xFFEFEEE8.toInt()
+            surfaceHigh = 0xFFE6E4DC.toInt()
+            raised = 0xFFFFFFFF.toInt()
+            hair = 0xFFE2E0D8.toInt()
+            outline = 0xFFD8D6CE.toInt()
+            textMain = 0xFF121214.toInt()
+            textDim = 0xFF6E6E76.toInt()
+            textFaint = 0xFF9A9AA2.toInt()
+            lime = 0xFFC8F26A.toInt()
+            onLime = 0xFF121214.toInt()
+            signalInk = 0xFF5E7A12.toInt()
+        } else {
+            bg = 0xFF0A0A0B.toInt()
+            surface = 0xFF151518.toInt()
+            surfaceLow = 0xFF141417.toInt()
+            surfaceHigh = 0xFF232329.toInt()
+            raised = 0xFF1F1F24.toInt()
+            hair = 0xFF2A2A30.toInt()
+            outline = 0xFF2C2C33.toInt()
+            textMain = 0xFFF2F2F5.toInt()
+            textDim = 0xFF94949E.toInt()
+            textFaint = 0xFF63636C.toInt()
+            lime = 0xFFC8F26A.toInt()
+            onLime = 0xFF0A0A0B.toInt()
+            signalInk = 0xFFC8F26A.toInt()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -104,6 +149,7 @@ class SettingsActivity : Activity() {
         window.navigationBarColor = bg
         stats = TypingStats(this)
         options = KeyboardPrefs(this)
+        applyPalette()
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -155,7 +201,7 @@ class SettingsActivity : Activity() {
         enabledStatus.text = if (isEnabled()) "Enabled" else "Not enabled yet"
         selectedStatus.text = if (isSelected()) "In use" else "Not selected yet"
         statusChip.text = if (active) "Active" else "Set up"
-        statusChip.setTextColor(if (active) lime else 0xFFE8B063.toInt())
+        statusChip.setTextColor(if (active) signalInk else 0xFFB97D2A.toInt())
         statusChip.background = if (active) {
             strokeRound(0x1AC8F26A, 0x47C8F26A, 999)
         } else {
@@ -194,7 +240,7 @@ class SettingsActivity : Activity() {
         addView(label("Remino", 21f, textMain, true).also {
             it.letterSpacing = -0.04f
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        statusChip = label("Set up", 12f, lime, true).apply {
+        statusChip = label("Set up", 12f, signalInk, true).apply {
             setPadding(dp(11), dp(6), dp(11), dp(6))
             background = strokeRound(0x1AC8F26A, 0x47C8F26A, 999)
         }
@@ -230,6 +276,36 @@ class SettingsActivity : Activity() {
     // ------------------------------------------------------------- keyboard
 
     private fun buildKeyboardPane(pane: LinearLayout) {
+        // Appearance
+        val look = card()
+        look.addView(sectionHeader("Appearance"))
+        val chipRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(15), 0, dp(15), dp(14))
+        }
+        appearanceChips.clear()
+        Appearance.entries.forEach { mode ->
+            val chip = label(mode.label, 12f, textDim, true).apply {
+                setPadding(dp(15), dp(8), dp(15), dp(8))
+                setOnClickListener {
+                    if (options.appearance == mode) return@setOnClickListener
+                    options.appearance = mode
+                    recreate()
+                }
+            }
+            appearanceChips.add(chip)
+            chipRow.addView(
+                chip,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { marginEnd = dp(8) },
+            )
+        }
+        look.addView(chipRow)
+        updateAppearanceChips()
+        pane.addView(look)
+
         // Set up
         val setup = card()
         setup.addView(sectionHeader("Set up"))
@@ -566,13 +642,26 @@ class SettingsActivity : Activity() {
         updateMascotChips()
     }
 
+    private fun updateAppearanceChips() {
+        val selected = options.appearance
+        appearanceChips.forEachIndexed { i, chip ->
+            val on = Appearance.entries.getOrNull(i) == selected
+            chip.setTextColor(if (on) onLime else textDim)
+            chip.background = if (on) {
+                roundRect(lime, 999)
+            } else {
+                strokeRound(0x00000000, hair, 999)
+            }
+        }
+    }
+
     private fun updateMascotChips() {
         val enabled = options.mascot
         val selected = options.mascotPlacement
         val order = listOf(MascotPlacement.TOOLBAR, MascotPlacement.ABOVE, MascotPlacement.CURSOR)
         mascotChips.forEachIndexed { i, chip ->
             val on = enabled && order.getOrNull(i) == selected
-            chip.setTextColor(if (on) lime else if (enabled) textDim else textFaint)
+            chip.setTextColor(if (on) signalInk else if (enabled) textDim else textFaint)
             chip.background = if (on) {
                 strokeRound(0x14C8F26A, 0x73C8F26A, 999)
             } else {
@@ -606,7 +695,7 @@ class SettingsActivity : Activity() {
         left.addView(label("Emoji skin tone", 14f, textMain, false))
         left.addView(label(toneName(options.emojiTone), 11f, textFaint, false))
         addView(left)
-        addView(label("Change", 12f, lime, true).apply {
+        addView(label("Change", 12f, signalInk, true).apply {
             setOnClickListener { showToneDialog() }
         })
     }
@@ -1448,7 +1537,7 @@ class SettingsActivity : Activity() {
         text = labelText
         isAllCaps = false
         textSize = 14f
-        setTextColor(if (tonal) lime else onLime)
+        setTextColor(if (tonal) signalInk else onLime)
         background = if (tonal) strokeRound(0x00000000, outline, 999) else roundRect(lime, 999)
         stateListAnimator = null
         setOnClickListener { onClick() }

@@ -35,5 +35,23 @@ data class KeyboardTheme(
             onAccent = 0xFF0A0A0B.toInt(),
             card = 0xFF1C1C20.toInt(),
         )
+
+        /** Warm paper light theme. Lime stays the signal colour, ink stays near-black. */
+        val Light = KeyboardTheme(
+            base = 0xFFEDEBE4.toInt(),
+            toolbar = 0xFFFBFAF6.toInt(),
+            key = 0xFFF7F6F1.toInt(),
+            specialKey = 0xFFE4E2DA.toInt(),
+            text = 0xFF121214.toInt(),
+            textDim = 0xFF6E6E76.toInt(),
+            icon = 0xFF3A3A40.toInt(),
+            inverted = 0xFF121214.toInt(),
+            onInverted = 0xFFF6F5F1.toInt(),
+            toolbarRadiusDp = 28f,
+            keyRadiusDp = 14f,
+            accent = 0xFFC8F26A.toInt(),
+            onAccent = 0xFF121214.toInt(),
+            card = 0xFFFFFFFF.toInt(),
+        )
     }
 }
