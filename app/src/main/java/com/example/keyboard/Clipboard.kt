@@ -137,12 +137,14 @@ class ClipboardStore private constructor(context: Context) {
         save()
     }
 
+    /** Stores an image and returns the row that was created, or null if history is off. */
     @Synchronized
-    fun addImage(base64: String) {
-        if (!options.clipboardEnabled || options.clipboardPaused || !options.clipboardImages) return
+    fun addImage(base64: String): ClipItem? {
+        if (!options.clipboardEnabled || options.clipboardPaused || !options.clipboardImages) return null
         ensureLoaded()
         items = ClipboardLogic.addImage(items, base64, System.currentTimeMillis())
         save()
+        return items.firstOrNull { it.image == base64 }
     }
 
     @Synchronized

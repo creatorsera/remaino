@@ -123,8 +123,8 @@ class SettingsActivity : Activity() {
             hair = 0xFFE2E0D8.toInt()
             outline = 0xFFD8D6CE.toInt()
             textMain = 0xFF121214.toInt()
-            textDim = 0xFF6E6E76.toInt()
-            textFaint = 0xFF9A9AA2.toInt()
+            textDim = 0xFF55555D.toInt()
+            textFaint = 0xFF74747C.toInt()
             lime = 0xFFC8F26A.toInt()
             onLime = 0xFF121214.toInt()
             signalInk = 0xFF5E7A12.toInt()
@@ -145,17 +145,31 @@ class SettingsActivity : Activity() {
         }
     }
 
+    /** Paints the window, status bar and navigation bar so no dark frame shows in Paper mode. */
+    private fun applyWindowPalette() {
+        window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(bg))
+        window.decorView.setBackgroundColor(bg)
+        window.statusBarColor = bg
+        window.navigationBarColor = bg
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            window.isStatusBarContrastEnforced = false
+            window.isNavigationBarContrastEnforced = false
+        }
+        val controller = androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
+        controller.isAppearanceLightStatusBars = lightMode
+        controller.isAppearanceLightNavigationBars = lightMode
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Rotation and theme changes recreate the activity; stay on the same page.
         page = savedInstanceState?.getString(KEY_PAGE)
             ?.let { name -> SettingsPage.entries.firstOrNull { it.name == name } }
             ?: SettingsPage.HOME
-        window.statusBarColor = bg
-        window.navigationBarColor = bg
         stats = TypingStats(this)
         options = KeyboardPrefs(this)
         applyPalette()
+        applyWindowPalette()
 
         pageRoot = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL

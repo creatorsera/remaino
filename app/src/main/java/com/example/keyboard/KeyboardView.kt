@@ -127,6 +127,7 @@ class KeyboardView(context: Context) : View(context) {
     private var copiedAt = 0L
     private var bulkUndo = false
     private var bulkRedo = false
+    private var listening = false
     private val prefs = KeyboardPrefs(context)
     private var suggestions: List<String> = emptyList()
     private var composingActive = false
@@ -184,7 +185,7 @@ class KeyboardView(context: Context) : View(context) {
     private var sheetHeight = 0f
     private val tabIcons = intArrayOf(
         R.drawable.ic_search, R.drawable.ic_clock, R.drawable.ic_smile, R.drawable.ic_person, R.drawable.ic_paw,
-        R.drawable.ic_cup, R.drawable.ic_ball, R.drawable.ic_car, R.drawable.ic_bulb, R.drawable.ic_heart,
+        R.drawable.ic_cup, R.drawable.ic_car, R.drawable.ic_ball, R.drawable.ic_bulb, R.drawable.ic_heart,
         R.drawable.ic_globe,
     )
 
@@ -430,6 +431,14 @@ class KeyboardView(context: Context) : View(context) {
         uiHandler.postDelayed(clearChipRunnable, 10_000L)
     }
 
+    /** Drives the animated "Listening…" state while the mic is recording. */
+    fun setListening(on: Boolean) {
+        if (listening == on) return
+        listening = on
+        rebuildTargets()
+        invalidate()
+    }
+
     /** Shows an Undo or Redo pill in the toolbar after a big deletion. */
     fun setBulkUndo(undo: Boolean, redo: Boolean) {
         if (bulkUndo == undo && bulkRedo == redo) return
@@ -581,7 +590,14 @@ class KeyboardView(context: Context) : View(context) {
             )
             val regionL = dp(56f)
             val regionR = w - dp(56f)
-            if (bulkUndo || bulkRedo) {
+            if (listening) {
+                targets.add(
+                    Target(
+                        RectF(regionL, cy - dp(16f), regionR, cy + dp(16f)),
+                        action = ToolbarAction.MIC,
+                    ),
+                )
+            } else if (bulkUndo || bulkRedo) {
                 targets.add(
                     Target(
                         RectF(regionL, cy - dp(16f), regionR, cy + dp(16f)),
@@ -808,10 +824,11 @@ class KeyboardView(context: Context) : View(context) {
         val items = clipStore.items().sortedByDescending { it.pinned }
         val cards = ArrayList<ClipCard>()
         val pad = dp(2f)
-        val gap = dp(8f)
+        // A wide, visible gutter keeps the two columns from reading as one card.
+        val gap = dp(18f)
         val topPad = dp(6f)
         val availW = (contentRect.width() - pad * 2f).coerceAtLeast(dp(80f))
-        val colW = (availW - gap) / 2f
+        val colW = ((availW - gap) / 2f).coerceAtLeast(dp(60f))
         // Four rows visible, like the reference, and a little taller on big screens.
         val cardH = ((contentRect.height() - topPad - gap * 3f) / 4.15f)
             .coerceIn(dp(52f), dp(78f))
@@ -821,22 +838,18 @@ class KeyboardView(context: Context) : View(context) {
             cards.add(ClipCard(pad, topPad, availW, cardH, hint = msg))
             clipContentH = topPad + cardH
         } else {
-            // Column-major: the left column fills first, the right column is staggered.
-            val leftCount = (items.size + 1) / 2
-            var y = topPad
-            for (i in 0 until leftCount) {
-                cards.add(ClipCard(pad, y, colW, cardH, item = items[i]))
-                y += cardH + gap
+            // Two clean, aligned columns that never flow into each other. Newest
+            // items read left to right, row by row.
+            var rowY = topPad
+            for (i in items.indices step 2) {
+                cards.add(ClipCard(pad, rowY, colW, cardH, item = items[i]))
+                val right = items.getOrNull(i + 1)
+                if (right != null) {
+                    cards.add(ClipCard(pad + colW + gap, rowY, colW, cardH, item = right))
+                }
+                rowY += cardH + dp(9f)
             }
-            val leftH = if (leftCount > 0) y - gap else 0f
-
-            var ry = topPad + (cardH + gap) / 3f
-            for (i in leftCount until items.size) {
-                cards.add(ClipCard(pad + colW + gap, ry, colW, cardH, item = items[i]))
-                ry += cardH + gap
-            }
-            val rightH = if (items.size > leftCount) ry - gap else 0f
-            clipContentH = max(leftH, rightH)
+            clipContentH = if (items.isNotEmpty()) rowY - dp(9f) else topPad + cardH
         }
         clipCards = cards
         clipScrollY = clipScrollY.coerceIn(0f, max(0f, clipContentH + dp(4f) - contentRect.height()))
@@ -1017,6 +1030,14 @@ class KeyboardView(context: Context) : View(context) {
         invalidate()
     }
 
+    /** Leaves emoji search or the sticker maker, e.g. when another field opens. */
+    fun cancelCapture() {
+        if (captureMode != Capture.NONE) exitCapture()
+    }
+
+    /** True while the keyboard is capturing text for sticker/emoji search. */
+    val isCapturing: Boolean get() = captureMode != Capture.NONE
+
     private fun exitCapture() {
         captureMode = Capture.NONE
         captureText.setLength(0)
@@ -1040,7 +1061,10 @@ class KeyboardView(context: Context) : View(context) {
     private fun sendSticker() {
         val text = captureText.toString().trim()
         if (text.isEmpty()) return
-        if (listener?.onStickerSend(text, stickerPalette, stickerStyle) == true) exitCapture()
+        // Always leave the capture mode, even if the app rejected the image. Staying
+        // open here is what made the sticker panel feel stuck.
+        listener?.onStickerSend(text, stickerPalette, stickerStyle)
+        exitCapture()
     }
 
     private fun drawCapturePill(canvas: Canvas, t: KeyboardTheme, w: Float) {
@@ -1134,7 +1158,9 @@ class KeyboardView(context: Context) : View(context) {
 
         if (captureMode != Capture.NONE) drawCapturePill(canvas, t, w)
 
-        if ((bulkUndo || bulkRedo) && !trayOpen && captureMode == Capture.NONE) {
+        if (listening && !trayOpen && captureMode == Capture.NONE) {
+            drawListeningPill(canvas, t, w)
+        } else if ((bulkUndo || bulkRedo) && !trayOpen && captureMode == Capture.NONE) {
             drawBulkUndoPill(canvas, t, w)
         } else if (copiedChip != null && !trayOpen && captureMode == Capture.NONE) {
             drawCopiedChip(canvas, t, w)
@@ -1205,6 +1231,39 @@ class KeyboardView(context: Context) : View(context) {
         val label = if (bulkRedo) "Redo delete" else "Undo delete"
         canvas.drawText(label, left + dp(42f), cy - (textPaint.descent() + textPaint.ascent()) / 2f, textPaint)
         textPaint.textAlign = Paint.Align.CENTER
+    }
+
+    /** Animated listening pill: three bars + pulsing mic, so voice mode is obvious. */
+    private fun drawListeningPill(canvas: Canvas, t: KeyboardTheme, w: Float) {
+        val cy = toolbarCenterY()
+        val left = dp(56f)
+        val right = w - dp(56f)
+        tmpRect.set(left, cy - dp(16f), right, cy + dp(16f))
+        fill.color = ColorUtils.blendARGB(t.key, t.accent, 0.14f)
+        canvas.drawRoundRect(tmpRect, dp(16f), dp(16f), fill)
+        strokePaint.color = ColorUtils.setAlphaComponent(t.accent, 150)
+        strokePaint.strokeWidth = dp(1f)
+        canvas.drawRoundRect(tmpRect, dp(16f), dp(16f), strokePaint)
+
+        val now = SystemClock.uptimeMillis()
+        val baseX = left + dp(28f)
+        for (i in 0 until 4) {
+            val phase = sin((now / 120.0) + i * 1.1).toFloat()
+            val h = dp(4f) + abs(phase) * dp(9f)
+            fill.color = t.accent
+            tmpRect.set(baseX + i * dp(7f), cy - h / 2f, baseX + i * dp(7f) + dp(3f), cy + h / 2f)
+            canvas.drawRoundRect(tmpRect, dp(2f), dp(2f), fill)
+        }
+        textPaint.textAlign = Paint.Align.LEFT
+        textPaint.textSize = sp(13f)
+        textPaint.color = t.text
+        canvas.drawText("Listening…", left + dp(62f), cy - (textPaint.descent() + textPaint.ascent()) / 2f, textPaint)
+        textPaint.textAlign = Paint.Align.RIGHT
+        textPaint.textSize = sp(11f)
+        textPaint.color = t.textDim
+        canvas.drawText("tap to stop", right - dp(12f), cy - (textPaint.descent() + textPaint.ascent()) / 2f, textPaint)
+        textPaint.textAlign = Paint.Align.CENTER
+        postInvalidateOnAnimation()
     }
 
     private fun drawCopiedChip(canvas: Canvas, t: KeyboardTheme, w: Float) {
@@ -1316,6 +1375,15 @@ class KeyboardView(context: Context) : View(context) {
             action == ToolbarAction.CLIP_EDIT ||
             (action == ToolbarAction.MIC && !trayOpen)
         val pressed = isPressed(tg)
+        if (action == ToolbarAction.MIC && listening) {
+            val now = SystemClock.uptimeMillis()
+            val pulse = (now % 1100L) / 1100f
+            strokePaint.color = ColorUtils.setAlphaComponent(t.accent, (150 * (1f - pulse)).toInt())
+            strokePaint.strokeWidth = dp(1.5f)
+            canvas.drawCircle(cx, cy, dp(16f) + dp(10f) * pulse, strokePaint)
+            fill.color = ColorUtils.setAlphaComponent(t.accent, 40)
+            canvas.drawCircle(cx, cy, dp(22f), fill)
+        }
         if (circular || pressed) {
             fill.color = if (pressed) ColorUtils.blendARGB(t.key, Color.WHITE, 0.18f) else t.key
             canvas.drawCircle(cx, cy, dp(16f), fill)
@@ -1467,6 +1535,11 @@ class KeyboardView(context: Context) : View(context) {
         clipScrollY = clipScrollY.coerceIn(0f, maxClipScroll())
         canvas.save()
         canvas.clipRect(contentRect)
+        // A hairline down the middle makes the two columns read as separate lanes.
+        val dividerX = contentRect.centerX()
+        strokePaint.color = ColorUtils.setAlphaComponent(t.textDim, 55)
+        strokePaint.strokeWidth = dp(1f)
+        canvas.drawLine(dividerX, contentRect.top + dp(2f), dividerX, contentRect.bottom - dp(2f), strokePaint)
 
         for (card in clipCards) {
             val left = contentRect.left + card.left

@@ -93,7 +93,11 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         clipManager = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
         clipManager?.addPrimaryClipChangedListener(clipListener)
         voice.onText = { text -> commitVoiceText(text) }
-        voice.onError = { message -> Toast.makeText(this, message, Toast.LENGTH_SHORT).show() }
+        voice.onState = { listening -> if (::keyboardView.isInitialized) keyboardView.setListening(listening) }
+        voice.onError = { message ->
+            if (::keyboardView.isInitialized) keyboardView.setListening(false)
+            Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        }
     }
 
     override fun onDestroy() {
@@ -197,6 +201,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         currentInputConnection?.requestCursorUpdates(InputConnection.CURSOR_UPDATE_MONITOR)
         keyboardView.applySettings(options)
         updateMascotOverlay()
+        keyboardView.cancelCapture()
         keyboardView.closeTray()
         keyboardView.setSensitive(sensitive)
         keyboardView.setFieldEmpty(isFieldEmpty())
@@ -212,6 +217,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
 
     override fun onFinishInputView(finishingInput: Boolean) {
         finishWord()
+        if (::keyboardView.isInitialized) keyboardView.cancelCapture()
         mascotOverlay.hide()
         mascotVisibleNow = false
         currentInputConnection?.requestCursorUpdates(0)
@@ -361,12 +367,32 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
             // of the field. At the very end of the text fall back to a normal backspace.
             val after = ic.getTextAfterCursor(4, 0)?.toString().orEmpty()
             if (after.isNotEmpty()) {
-                ic.deleteSurroundingText(0, Editing.firstCodePointLength(after))
+                deleteForward(ic, after)
             } else {
                 sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
             }
         }
         updateFieldEmpty()
+    }
+
+    /**
+     * Deletes the first character after the caret. Some editors ignore
+     * deleteSurroundingText around a composing region or mid-word, so verify the
+     * text actually changed and fall back to a forward-delete key, then to a normal
+     * backspace. This is what makes placing the caret inside "foour" and tapping
+     * delete work in every app.
+     */
+    private fun deleteForward(ic: InputConnection, after: String) {
+        val cut = Editing.firstCodePointLength(after)
+        ic.deleteSurroundingText(0, cut)
+        val now = ic.getTextAfterCursor(4, 0)?.toString().orEmpty()
+        if (now != after) return
+        // No visible change: the editor rejected the surrounding delete.
+        sendDownUpKeyEvents(KeyEvent.KEYCODE_FORWARD_DEL)
+        val again = ic.getTextAfterCursor(4, 0)?.toString().orEmpty()
+        if (again != after) return
+        // Last resort: a normal backspace at least removes the character before the caret.
+        sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
     }
 
     override fun onSpace() {
@@ -524,7 +550,6 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
             )
             return
         }
-        Toast.makeText(this, "Listening…", Toast.LENGTH_SHORT).show()
         voice.start()
     }
 
@@ -671,6 +696,9 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
             if (live == composing.toString()) return
         }
         run {
+            // End the app-side composing span too. Leaving it active makes some
+            // editors ignore a delete that starts in the middle of the word.
+            currentInputConnection?.finishComposingText()
             composing.clear()
             correctedFrom = null
             if (::keyboardView.isInitialized) {
