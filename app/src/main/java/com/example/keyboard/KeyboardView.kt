@@ -127,6 +127,8 @@ class KeyboardView(context: Context) : View(context) {
     private var fieldEmpty = true
     private var caretX = -1f
     private var copiedChip: String? = null
+    /** Exact bounds of the COPIED / Paste pill while it is on screen. */
+    private var copiedPillRect: RectF? = null
     private var copiedAt = 0L
     private var bulkUndo = false
     private var bulkRedo = false
@@ -506,6 +508,7 @@ class KeyboardView(context: Context) : View(context) {
 
     private fun rebuildTargets() {
         targets.clear()
+        copiedPillRect = null
         val w = width.toFloat()
         if (w <= 0f) return
         val cy = toolbarCenterY()
@@ -638,9 +641,11 @@ class KeyboardView(context: Context) : View(context) {
             } else if (copiedChip != null) {
                 val pillL = regionL + gap
                 val pillR = regionR - gap
+                val pillRect = RectF(pillL, cy - dp(18f), pillR, cy + dp(18f))
+                copiedPillRect = pillRect
                 targets.add(
                     Target(
-                        RectF(pillL, cy - dp(18f), pillR, cy + dp(18f)),
+                        RectF(pillRect),
                         action = ToolbarAction.COPY_PASTE,
                     ),
                 )
@@ -1882,7 +1887,16 @@ class KeyboardView(context: Context) : View(context) {
                     gridMoved = false
                     return true
                 }
-                val tg = hit(x, y)
+                // The COPIED / Paste pill is checked first so a stale target list can
+                // never swallow the tap (it used to look like the pill "did nothing").
+                val pillRect = copiedPillRect
+                val tg = if (pillRect != null && copiedChip != null && !trayOpen &&
+                    panel == Panel.KEYS && pillRect.contains(x, y)
+                ) {
+                    Target(RectF(pillRect), action = ToolbarAction.COPY_PASTE)
+                } else {
+                    hit(x, y)
+                }
                 if (tg != null) {
                     pressedByPointer[event.getPointerId(i)] = tg
                     Feedback.tap(this, prefs)
@@ -2174,8 +2188,11 @@ class KeyboardView(context: Context) : View(context) {
                 invalidate()
             }
             ToolbarAction.COPY_PASTE -> {
-                val text = copiedChip
+                // Fall back to the newest text clip if the pill text was cleared while
+                // the finger was still down, so the tap always pastes something.
+                val text = copiedChip ?: clipStore.items().firstOrNull { it.image == null }?.text
                 copiedChip = null
+                copiedPillRect = null
                 uiHandler.removeCallbacks(clearChipRunnable)
                 rebuildTargets()
                 invalidate()
