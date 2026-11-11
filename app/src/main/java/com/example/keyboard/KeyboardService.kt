@@ -363,11 +363,11 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
             ic.commitText("", 1)
             recordBulkUndo(selected.toString())
         } else {
-            // Delete the character the caret is on (forward delete), not the last letter
-            // of the field. At the very end of the text fall back to a normal backspace.
-            val after = ic.getTextAfterCursor(4, 0)?.toString().orEmpty()
-            if (after.isNotEmpty()) {
-                deleteForward(ic, after)
+            // Standard backspace: delete the character BEFORE the caret.
+            // Try deleteSurroundingText(1, 0) first, fall back to KEYCODE_DEL.
+            val before = ic.getTextBeforeCursor(4, 0)?.toString().orEmpty()
+            if (before.isNotEmpty()) {
+                deleteBackward(ic, before)
             } else {
                 sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
             }
@@ -376,22 +376,17 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
     }
 
     /**
-     * Deletes the first character after the caret. Some editors ignore
-     * deleteSurroundingText around a composing region or mid-word, so verify the
-     * text actually changed and fall back to a forward-delete key, then to a normal
-     * backspace. This is what makes placing the caret inside "foour" and tapping
-     * delete work in every app.
+     * Deletes the last character before the caret (standard backspace behavior).
+     * Verifies the text actually changed and falls back to KEYCODE_DEL if needed.
+     * This makes placing the caret inside "foour" and tapping backspace remove the
+     * character before the caret, working reliably across all editors.
      */
-    private fun deleteForward(ic: InputConnection, after: String) {
-        val cut = Editing.firstCodePointLength(after)
-        ic.deleteSurroundingText(0, cut)
-        val now = ic.getTextAfterCursor(4, 0)?.toString().orEmpty()
-        if (now != after) return
+    private fun deleteBackward(ic: InputConnection, before: String) {
+        val cut = Editing.firstCodePointLength(before)
+        ic.deleteSurroundingText(cut, 0)
+        val now = ic.getTextBeforeCursor(4, 0)?.toString().orEmpty()
+        if (now != before) return
         // No visible change: the editor rejected the surrounding delete.
-        sendDownUpKeyEvents(KeyEvent.KEYCODE_FORWARD_DEL)
-        val again = ic.getTextAfterCursor(4, 0)?.toString().orEmpty()
-        if (again != after) return
-        // Last resort: a normal backspace at least removes the character before the caret.
         sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
     }
 

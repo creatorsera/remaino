@@ -163,6 +163,7 @@ class KeyboardView(context: Context) : View(context) {
     private val contentRect = RectF()
     private var scrollY = 0f
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+    private val scrollTouchSlop = (ViewConfiguration.get(context).scaledTouchSlop * 0.5f).toInt()
     private var gridPointer = -1
     private var gridDownY = 0f
     private var gridLastY = 0f
@@ -346,6 +347,7 @@ class KeyboardView(context: Context) : View(context) {
         showingSymbols = on
         panel = Panel.KEYS
         if (changed) {
+            requestLayout()
             rebuildTargets()
             invalidate()
         }
@@ -577,27 +579,30 @@ class KeyboardView(context: Context) : View(context) {
             val step = (endX - startX) / actions.size
             actions.forEachIndexed { i, a ->
                 val cx = startX + step * (i + 0.5f)
-                targets.add(Target(RectF(cx - step / 2f, topOffset(), cx + step / 2f, topOffset() + toolbarH), action = a))
+                targets.add(Target(RectF(cx - step / 2f, topOffset(), cx + step / 2f, topOffset() + toolbarH), action = a, tray = true))
             }
             addTrayTargets()
         } else {
-            val micCx = w - dp(28f)
-            targets.add(
-                Target(
-                    RectF(micCx - dp(22f), cy - dp(22f), micCx + dp(22f), cy + dp(22f)),
-                    action = ToolbarAction.MIC,
-                ),
-            )
             val regionL = dp(56f)
             val regionR = w - dp(56f)
             if (listening) {
+                // Listening pill replaces the mic button entirely; no separate mic target here.
                 targets.add(
                     Target(
                         RectF(regionL, cy - dp(16f), regionR, cy + dp(16f)),
                         action = ToolbarAction.MIC,
                     ),
                 )
-            } else if (bulkUndo || bulkRedo) {
+            } else {
+                val micCx = w - dp(28f)
+                targets.add(
+                    Target(
+                        RectF(micCx - dp(22f), cy - dp(22f), micCx + dp(22f), cy + dp(22f)),
+                        action = ToolbarAction.MIC,
+                    ),
+                )
+            }
+            if (bulkUndo || bulkRedo) {
                 targets.add(
                     Target(
                         RectF(regionL, cy - dp(16f), regionR, cy + dp(16f)),
@@ -810,6 +815,7 @@ class KeyboardView(context: Context) : View(context) {
         scrollY = 0f
         clipScrollY = 0f
         clipEditMode = false
+        requestLayout()
         rebuildTargets()
         reloadClipboard()
         invalidate()
@@ -1535,11 +1541,7 @@ class KeyboardView(context: Context) : View(context) {
         clipScrollY = clipScrollY.coerceIn(0f, maxClipScroll())
         canvas.save()
         canvas.clipRect(contentRect)
-        // A hairline down the middle makes the two columns read as separate lanes.
-        val dividerX = contentRect.centerX()
-        strokePaint.color = ColorUtils.setAlphaComponent(t.textDim, 55)
-        strokePaint.strokeWidth = dp(1f)
-        canvas.drawLine(dividerX, contentRect.top + dp(2f), dividerX, contentRect.bottom - dp(2f), strokePaint)
+        // Columns are separated by the gutter; no divider line needed.
 
         for (card in clipCards) {
             val left = contentRect.left + card.left
