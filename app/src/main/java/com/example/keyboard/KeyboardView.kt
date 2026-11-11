@@ -125,6 +125,8 @@ class KeyboardView(context: Context) : View(context) {
     private var caretX = -1f
     private var copiedChip: String? = null
     private var copiedAt = 0L
+    private var bulkUndo = false
+    private var bulkRedo = false
     private val prefs = KeyboardPrefs(context)
     private var suggestions: List<String> = emptyList()
     private var composingActive = false
@@ -167,6 +169,11 @@ class KeyboardView(context: Context) : View(context) {
     private var gridLastX = 0f
     private var gridMoved = false
 
+    // Horizontal swipes on the action tray (dots show there is a second page).
+    private var trayPointer = -1
+    private var trayDownX = 0f
+    private var trayMoved = false
+
     // Emoji sheet
     private val emojiCols = 9
     private val recentsStore = EmojiRecents(context)
@@ -178,6 +185,7 @@ class KeyboardView(context: Context) : View(context) {
     private val tabIcons = intArrayOf(
         R.drawable.ic_search, R.drawable.ic_clock, R.drawable.ic_smile, R.drawable.ic_person, R.drawable.ic_paw,
         R.drawable.ic_cup, R.drawable.ic_ball, R.drawable.ic_car, R.drawable.ic_bulb, R.drawable.ic_heart,
+        R.drawable.ic_globe,
     )
 
     // Clipboard list
@@ -422,6 +430,15 @@ class KeyboardView(context: Context) : View(context) {
         uiHandler.postDelayed(clearChipRunnable, 10_000L)
     }
 
+    /** Shows an Undo or Redo pill in the toolbar after a big deletion. */
+    fun setBulkUndo(undo: Boolean, redo: Boolean) {
+        if (bulkUndo == undo && bulkRedo == redo) return
+        bulkUndo = undo
+        bulkRedo = redo
+        rebuildTargets()
+        invalidate()
+    }
+
     /** Rebuilds the clipboard sheet if it is open (a new item may have arrived). */
     fun refreshClipboard() {
         if (panel == Panel.CLIPBOARD) {
@@ -564,7 +581,14 @@ class KeyboardView(context: Context) : View(context) {
             )
             val regionL = dp(56f)
             val regionR = w - dp(56f)
-            if (copiedChip != null) {
+            if (bulkUndo || bulkRedo) {
+                targets.add(
+                    Target(
+                        RectF(regionL, cy - dp(16f), regionR, cy + dp(16f)),
+                        action = if (bulkRedo) ToolbarAction.REDO else ToolbarAction.UNDO,
+                    ),
+                )
+            } else if (copiedChip != null) {
                 targets.add(
                     Target(
                         RectF(regionL, cy - dp(18f), regionR, cy + dp(18f)),
@@ -654,17 +678,17 @@ class KeyboardView(context: Context) : View(context) {
         val left = sideMargin
         val right = w - sideMargin
         val top = keysTop()
-        val tabsH = dp(38f)
+        val tabsH = dp(34f)
         val tabs = EmojiData.categories.size + 2
         val tabW = (right - left) / tabs
         for (i in 0 until tabs) {
             targets.add(Target(RectF(left + i * tabW, top, left + (i + 1) * tabW, top + tabsH), tabIndex = i))
         }
-        val bottomH = dp(46f)
+        val bottomH = dp(34f)
         val bottomTop = top + keysHeight() - bottomH
         contentRect.set(left, top + tabsH + dp(2f), right, bottomTop - dp(2f))
-        val bw = dp(66f)
-        val stickerW = dp(46f)
+        val bw = dp(62f)
+        val stickerW = dp(40f)
         targets.add(Target(RectF(left, bottomTop, left + bw, bottomTop + bottomH), key = abcKey))
         // Quick ways into the sticker maker and settings, like the emoji tray's
         // bottom row.
@@ -1110,7 +1134,11 @@ class KeyboardView(context: Context) : View(context) {
 
         if (captureMode != Capture.NONE) drawCapturePill(canvas, t, w)
 
-        if (copiedChip != null && !trayOpen && captureMode == Capture.NONE) drawCopiedChip(canvas, t, w)
+        if ((bulkUndo || bulkRedo) && !trayOpen && captureMode == Capture.NONE) {
+            drawBulkUndoPill(canvas, t, w)
+        } else if (copiedChip != null && !trayOpen && captureMode == Capture.NONE) {
+            drawCopiedChip(canvas, t, w)
+        }
 
         for (tg in targets) {
             val key = tg.key
@@ -1158,6 +1186,27 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     /** The copied-text pill that briefly replaces the suggestion row. */
+    /** A wide, obvious Undo/Redo pill after a selection or word was wiped out. */
+    private fun drawBulkUndoPill(canvas: Canvas, t: KeyboardTheme, w: Float) {
+        val cy = toolbarCenterY()
+        val left = dp(56f)
+        val right = w - dp(56f)
+        tmpRect.set(left, cy - dp(16f), right, cy + dp(16f))
+        fill.color = t.key
+        canvas.drawRoundRect(tmpRect, dp(16f), dp(16f), fill)
+        strokePaint.color = ColorUtils.setAlphaComponent(t.accent, 110)
+        strokePaint.strokeWidth = dp(1f)
+        canvas.drawRoundRect(tmpRect, dp(16f), dp(16f), strokePaint)
+        val icon = if (bulkRedo) R.drawable.ic_redo else R.drawable.ic_undo
+        drawIcon(canvas, icon, left + dp(24f), cy, dp(18f), t.accent)
+        textPaint.textAlign = Paint.Align.LEFT
+        textPaint.textSize = sp(13f)
+        textPaint.color = t.text
+        val label = if (bulkRedo) "Redo delete" else "Undo delete"
+        canvas.drawText(label, left + dp(42f), cy - (textPaint.descent() + textPaint.ascent()) / 2f, textPaint)
+        textPaint.textAlign = Paint.Align.CENTER
+    }
+
     private fun drawCopiedChip(canvas: Canvas, t: KeyboardTheme, w: Float) {
         val cy = toolbarCenterY()
         val left = dp(56f)
@@ -1306,9 +1355,15 @@ class KeyboardView(context: Context) : View(context) {
         fill.color = if (isPressed(tg)) ColorUtils.blendARGB(base, Color.GRAY, 0.2f) else base
         val r = tg.rect
         canvas.drawRoundRect(r, r.height() / 2f, r.height() / 2f, fill)
-        textPaint.textSize = sp(15f)
+        val maxTextW = r.width() - dp(16f)
+        var size = sp(15f)
+        textPaint.textSize = size
+        while (size > sp(10f) && textPaint.measureText(label) > maxTextW) {
+            size -= sp(0.5f)
+            textPaint.textSize = size
+        }
         textPaint.color = if (highlighted) t.onInverted else t.text
-        val shown = TextUtils.ellipsize(label, textPaint, r.width() - dp(16f), TextUtils.TruncateAt.END)
+        val shown = TextUtils.ellipsize(label, textPaint, maxTextW, TextUtils.TruncateAt.END)
         val y = r.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f
         canvas.drawText(shown, 0, shown.length, r.centerX(), y, textPaint)
     }
@@ -1606,6 +1661,11 @@ class KeyboardView(context: Context) : View(context) {
                     gripRawY = event.rawY
                     return true
                 }
+                if (trayOpen && trayPointer == -1 && i == 0 && y > topOffset() + toolbarH) {
+                    trayPointer = event.getPointerId(i)
+                    trayDownX = x
+                    trayMoved = false
+                }
                 val scrollPanel = panel == Panel.EMOJI || panel == Panel.CLIPBOARD
                 if (scrollPanel && gridPointer == -1 && contentRect.contains(x, y)) {
                     gridPointer = event.getPointerId(i)
@@ -1643,6 +1703,12 @@ class KeyboardView(context: Context) : View(context) {
                 }
             }
             MotionEvent.ACTION_MOVE -> {
+                if (trayPointer != -1) {
+                    val idx = event.findPointerIndex(trayPointer)
+                    if (idx >= 0 && abs(event.getX(idx) - trayDownX) > touchSlop) {
+                        trayMoved = true
+                    }
+                }
                 if (gripPointer != -1) {
                     val dx = event.rawX - gripRawX
                     val dy = event.rawY - gripRawY
@@ -1692,6 +1758,19 @@ class KeyboardView(context: Context) : View(context) {
                     dragEndListener?.invoke()
                     return true
                 }
+                if (id == trayPointer) {
+                    val dx = event.getX(i) - trayDownX
+                    trayPointer = -1
+                    if (trayMoved && abs(dx) > dp(40f)) {
+                        pressedByPointer.remove(id)
+                        val next = if (dx < 0) trayPage + 1 else trayPage - 1
+                        trayPage = ((next % trayPageCount) + trayPageCount) % trayPageCount
+                        rebuildTargets()
+                        invalidate()
+                        return true
+                    }
+                    trayMoved = false
+                }
                 if (id == gridPointer) {
                     if (!gridMoved) {
                         if (panel == Panel.EMOJI) {
@@ -1728,6 +1807,8 @@ class KeyboardView(context: Context) : View(context) {
             MotionEvent.ACTION_CANCEL -> {
                 pressedByPointer.clear()
                 gridPointer = -1
+                trayPointer = -1
+                trayMoved = false
                 if (gripPointer != -1) {
                     gripPointer = -1
                     dragEndListener?.invoke()

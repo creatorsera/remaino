@@ -1195,7 +1195,7 @@ class SettingsActivity : Activity() {
         updateTitle.text = "Checking for updates…"
         updateSub.text = "Talking to GitHub only"
         Thread {
-            val release = UpdateChecker.fetchLatest()
+            val result = UpdateChecker.checkLatest()
             val installed = try {
                 packageManager.getPackageInfo(packageName, 0).versionName ?: "0"
             } catch (e: Exception) {
@@ -1204,25 +1204,31 @@ class SettingsActivity : Activity() {
             runOnUiThread {
                 checkingUpdate = false
                 updateIcon.stop()
-                if (release != null) updateIcon.showDone()
+                if (result is UpdateChecker.Check.Found) updateIcon.showDone()
                 latestRelease = null
-                when {
-                    release == null -> {
+                when (result) {
+                    is UpdateChecker.Check.NoRelease -> {
+                        updateTitle.text = "No releases yet"
+                        updateSub.text = result.message
+                    }
+                    is UpdateChecker.Check.Failed -> {
                         updateTitle.text = "Check for updates"
-                        updateSub.text = "Could not reach GitHub. Tap to try again."
+                        updateSub.text = "Couldn't check updates: ${result.message}. Tap to try again."
                     }
-                    UpdateChecker.isNewer(release.tag, installed) -> {
-                        latestRelease = release
-                        updateTitle.text = "Update available · v${release.tag}"
-                        updateSub.text = if (release.apkUrl != null && release.checksumUrl != null) {
-                            "Tap to download and install"
+                    is UpdateChecker.Check.Found -> {
+                        val release = result.release
+                        if (UpdateChecker.isNewer(release.tag, installed)) {
+                            latestRelease = release
+                            updateTitle.text = "Update available · v${release.tag}"
+                            updateSub.text = if (release.apkUrl != null && release.checksumUrl != null) {
+                                "Tap to download and install"
+                            } else {
+                                "Tap to open the release page"
+                            }
                         } else {
-                            "Tap to open the release page"
+                            updateTitle.text = "You're up to date"
+                            updateSub.text = "Remino v$installed"
                         }
-                    }
-                    else -> {
-                        updateTitle.text = "You're up to date"
-                        updateSub.text = "Remino v$installed"
                     }
                 }
             }

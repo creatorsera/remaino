@@ -12,6 +12,9 @@ import java.security.MessageDigest
 
 class UpdateException(message: String) : Exception(message)
 
+/** 404 means the repository exists but has not published a release yet. */
+class NoReleaseException : Exception()
+
 /**
  * The only part of the app that uses the internet: a release check against GitHub.
  * It runs at most once a week, or when the user taps "Check for updates".
@@ -44,12 +47,28 @@ object UpdateChecker {
         val versionName: String,
     )
 
-    fun fetchLatest(): Release? {
+    sealed class Check {
+        data class Found(val release: Release) : Check()
+        data class NoRelease(val message: String) : Check()
+        data class Failed(val message: String) : Check()
+    }
+
+    fun fetchLatest(): Release? = when (val result = checkLatest()) {
+        is Check.Found -> result.release
+        else -> null
+    }
+
+    /** Explains *why* a check failed instead of always saying GitHub is unreachable. */
+    fun checkLatest(): Check {
         return try {
             val body = request(ENDPOINT, MAX_APK_BYTES)
-            parseRelease(JSONObject(body))
+            val release = parseRelease(JSONObject(body))
+                ?: return Check.NoRelease("GitHub has no release for this repository yet.")
+            Check.Found(release)
+        } catch (e: NoReleaseException) {
+            Check.NoRelease("No Remino release has been published yet.")
         } catch (e: Exception) {
-            null
+            Check.Failed(e.message ?: "Network error")
         }
     }
 
@@ -230,8 +249,11 @@ object UpdateChecker {
         var connection: HttpURLConnection? = null
         try {
             connection = open(url)
-            if (connection.responseCode !in 200..299) {
-                throw UpdateException("GitHub returned ${connection.responseCode}.")
+            val code = connection.responseCode
+            if (code == 404) throw NoReleaseException()
+            if (code !in 200..299) {
+                val reason = if (code == 403) "GitHub rate limit reached" else "GitHub returned $code"
+                throw UpdateException(reason)
             }
             val builder = StringBuilder()
             connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->

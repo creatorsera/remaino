@@ -47,7 +47,7 @@ class SuggestionEngine(private val builtIn: List<String> = COMMON_WORDS) {
                 if (near.size >= limit) return near.distinct()
             }
         }
-        for (word in builtIn.asSequence().take(4000)) {
+        for (word in builtIn.asSequence()) {
             if (word in hidden || word == p) continue
             if (withinOneEdit(p, word)) {
                 near.add(word)

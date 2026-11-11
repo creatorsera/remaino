@@ -8,7 +8,7 @@ import android.content.Context
  */
 object EnglishWords {
     private const val ASSET = "english_words.txt"
-    private const val MAX_WORDS = 12_000
+    private const val MAX_WORDS = 60_000
 
     @Volatile
     private var cached: List<String>? = null
@@ -27,7 +27,7 @@ object EnglishWords {
                 for (line in lines) {
                     if (words.size >= MAX_WORDS) break
                     val word = line.trim().lowercase()
-                    if (word.length < 2 || word.length > 24) continue
+                    if (word.length < 2 || word.length > 32) continue
                     if (!word.all { it in 'a'..'z' }) continue
                     if (SuggestionFilter.isBlocked(word)) continue
                     words.add(word)

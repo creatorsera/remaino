@@ -1,8 +1,10 @@
 package com.example.keyboard
 
+import android.Manifest
 import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.inputmethodservice.InputMethodService
@@ -34,6 +36,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
     private lateinit var hiddenWords: HiddenWords
     private lateinit var corrections: Corrections
     private val engine by lazy { SuggestionEngine(EnglishWords.load(this)) }
+    private val voice by lazy { VoiceInput(this) }
     private val composing = StringBuilder()
 
     /** The word as it looked before the user started correcting it. */
@@ -42,6 +45,10 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
     /** Word-level undo/redo. Each entry is a committed word (with its trailing space). */
     private val undoStack = ArrayDeque<String>()
     private val redoStack = ArrayDeque<String>()
+
+    /** Text removed by one bulk action (selection or delete-word), for the toolbar Undo pill. */
+    private var bulkUndoText: String? = null
+    private var bulkRedoText: String? = null
     private var lastWord = ""
 
     private var clipManager: ClipboardManager? = null
@@ -85,9 +92,12 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         mascotOverlay = MascotOverlay(this)
         clipManager = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
         clipManager?.addPrimaryClipChangedListener(clipListener)
+        voice.onText = { text -> commitVoiceText(text) }
+        voice.onError = { message -> Toast.makeText(this, message, Toast.LENGTH_SHORT).show() }
     }
 
     override fun onDestroy() {
+        voice.stop()
         clipManager?.removePrimaryClipChangedListener(clipListener)
         mascotOverlay.hide()
         if (::keyboardView.isInitialized) floatingHost.hide(keyboardView)
@@ -158,6 +168,9 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         composing.clear()
         undoStack.clear()
         redoStack.clear()
+        bulkUndoText = null
+        bulkRedoText = null
+        if (::keyboardView.isInitialized) keyboardView.setBulkUndo(false, false)
         lastWord = ""
 
         val cls = info.inputType and InputType.TYPE_MASK_CLASS
@@ -260,6 +273,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         val ch = text.firstOrNull() ?: return
         // Typing always hides Reo and any "paste this" pill.
         keyboardView.dismissCopiedChip()
+        clearBulkUndo()
         keyboardView.setFieldEmpty(false)
         if (useComposing && (ch.isLetter() || (ch == '\'' && composing.isNotEmpty()))) {
             composing.append(text)
@@ -313,6 +327,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
     override fun onBackspace() {
         val ic = currentInputConnection ?: return
         keyboardView.dismissCopiedChip()
+        clearBulkUndo()
         if (composing.isNotEmpty()) {
             // Only trim the composing word when the caret is still at its end. If the
             // user tapped inside the word, the composing span is stale: commit it and
@@ -340,6 +355,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         val selected = ic.getSelectedText(0)
         if (selected != null && selected.isNotEmpty()) {
             ic.commitText("", 1)
+            recordBulkUndo(selected.toString())
         } else {
             // Delete the character the caret is on (forward delete), not the last letter
             // of the field. At the very end of the text fall back to a normal backspace.
@@ -355,6 +371,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
 
     override fun onSpace() {
         val ic = currentInputConnection ?: return
+        clearBulkUndo()
         keyboardView.dismissCopiedChip()
         finishWord()
         val before = ic.getTextBeforeCursor(2, 0)
@@ -379,6 +396,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
 
     override fun onEnter() {
         val ic = currentInputConnection ?: return
+        clearBulkUndo()
         keyboardView.dismissCopiedChip()
         finishWord()
         if (enterIsAction) {
@@ -392,6 +410,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
     }
 
     override fun onSuggestion(word: String) {
+        clearBulkUndo()
         val ic = currentInputConnection ?: return
         keyboardView.dismissCopiedChip()
         if (word.isNotEmpty() && word.none { it.isLetterOrDigit() }) {
@@ -421,6 +440,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
     }
 
     override fun onEmoji(emoji: String) {
+        clearBulkUndo()
         val ic = currentInputConnection ?: return
         keyboardView.dismissCopiedChip()
         finishWord()
@@ -446,6 +466,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
 
     override fun onPaste(text: String) {
         val ic = currentInputConnection ?: return
+        clearBulkUndo()
         keyboardView.dismissCopiedChip()
         finishWord()
         ic.commitText(text, 1)
@@ -470,14 +491,50 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         val (behind, ahead) = Editing.wordDeleteCounts(before, after)
         if (behind + ahead > 0) {
             // Remove the whole word the caret sits in, on both sides of it.
+            val removed = before.substring(before.length - behind) + after.substring(0, ahead)
             ic.deleteSurroundingText(behind, ahead)
+            recordBulkUndo(removed)
         } else if (after.isNotEmpty()) {
-            ic.deleteSurroundingText(0, Editing.firstCodePointLength(after))
+            val cut = Editing.firstCodePointLength(after)
+            ic.deleteSurroundingText(0, cut)
+            recordBulkUndo(after.substring(0, cut))
         } else if (before.isNotEmpty()) {
+            val cut = Character.charCount(before.codePointBefore(before.length))
+            val removed = before.takeLast(cut)
             sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
+            recordBulkUndo(removed)
         }
         lastWord = ""
         keyboardView.setFieldEmpty(isFieldEmpty())
+        refreshSuggestions()
+    }
+
+    /** Offline-first voice typing through Android's speech recognizer. */
+    private fun startVoiceInput() {
+        if (voice.isListening) {
+            voice.stop()
+            Toast.makeText(this, "Stopped listening.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            Toast.makeText(this, "Allow the microphone, then tap the mic again.", Toast.LENGTH_LONG).show()
+            startActivity(
+                Intent(this, VoicePermissionActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+            return
+        }
+        Toast.makeText(this, "Listening…", Toast.LENGTH_SHORT).show()
+        voice.start()
+    }
+
+    private fun commitVoiceText(text: String) {
+        val ic = currentInputConnection ?: return
+        clearBulkUndo()
+        keyboardView.dismissCopiedChip()
+        finishWord()
+        ic.commitText(text, 1)
+        keyboardView.setFieldEmpty(false)
         refreshSuggestions()
     }
 
@@ -489,8 +546,8 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
                 startActivity(intent)
             }
             ToolbarAction.LANGUAGE -> onGlobe()
-            ToolbarAction.UNDO -> undoWord()
-            ToolbarAction.REDO -> redoWord()
+            ToolbarAction.UNDO -> if (bulkUndoText != null) undoBulk() else undoWord()
+            ToolbarAction.REDO -> if (bulkRedoText != null) redoBulk() else redoWord()
             ToolbarAction.FLOATING -> {
                 prefs.floatingKeyboard = !prefs.floatingKeyboard
                 applyHostMode()
@@ -506,6 +563,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
             }
             ToolbarAction.HIDE -> requestHideSelf(0)
             ToolbarAction.DELETE_WORD -> onDeleteWord()
+            ToolbarAction.MIC -> startVoiceInput()
             ToolbarAction.MENU, ToolbarAction.CLOSE -> Unit
             else -> Toast.makeText(this, "Coming soon", Toast.LENGTH_SHORT).show()
         }
@@ -645,7 +703,9 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         val offsetY = prefs.mascotOffsetY * dm.density
         val x = (caretScreenX + 18 * dm.density - size / 2f + offsetX).toInt()
         val caretCentreY = (caretScreenTop + caretScreenBottom) / 2f
-        val y = (caretCentreY - size / 2f + offsetY).toInt()
+        // Sit a little above the caret line so Reo never covers the text or the
+        // suggestion row that sits right above the keyboard.
+        val y = (caretCentreY - size / 2f - 10 * dm.density + offsetY).toInt()
         mascotOverlay.show(x, y, mascotDeletingNow)
     }
 
@@ -794,6 +854,46 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
             if (undoStack.size > MAX_UNDO) undoStack.removeFirst()
             redoStack.clear()
         }
+    }
+
+    /** Offers a one-tap Undo in the toolbar after a selection or word is deleted. */
+    private fun recordBulkUndo(removed: String) {
+        if (removed.isEmpty()) return
+        bulkUndoText = removed
+        bulkRedoText = null
+        if (::keyboardView.isInitialized) keyboardView.setBulkUndo(true, false)
+    }
+
+    private fun clearBulkUndo() {
+        if (bulkUndoText != null || bulkRedoText != null) {
+            bulkUndoText = null
+            bulkRedoText = null
+            if (::keyboardView.isInitialized) keyboardView.setBulkUndo(false, false)
+        }
+    }
+
+    private fun undoBulk() {
+        val ic = currentInputConnection ?: return
+        val text = bulkUndoText ?: return
+        ic.commitText(text, 1)
+        bulkUndoText = null
+        bulkRedoText = text
+        keyboardView.setBulkUndo(false, true)
+        keyboardView.setFieldEmpty(false)
+        lastWord = ""
+        refreshSuggestions()
+    }
+
+    private fun redoBulk() {
+        val ic = currentInputConnection ?: return
+        val text = bulkRedoText ?: return
+        ic.deleteSurroundingText(text.length, 0)
+        bulkRedoText = null
+        bulkUndoText = text
+        keyboardView.setBulkUndo(true, false)
+        lastWord = ""
+        keyboardView.setFieldEmpty(isFieldEmpty())
+        refreshSuggestions()
     }
 
     /**
