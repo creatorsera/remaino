@@ -544,6 +544,9 @@ class KeyboardView(context: Context) : View(context) {
             contentRect.set(sideMargin, top, w - sideMargin, top + keysHeight())
             return
         }
+        // Leaving the clipboard/emoji panel: the contentRect from those panels would
+        // otherwise swallow the first tap on the keyboard keys area.
+        if (panel == Panel.KEYS) contentRect.set(0f, 0f, 0f, 0f)
 
         if (captureMode != Capture.NONE) {
             targets.add(Target(leftRect, action = ToolbarAction.BACK))
@@ -855,6 +858,9 @@ class KeyboardView(context: Context) : View(context) {
         clipEditMode = false
         clipSheetVisible = false
         trayOpen = false
+        gridPointer = -1
+        trayPointer = -1
+        pressedByPointer.clear()
         rebuildTargets()
         reloadClipboard()
         requestLayout()
@@ -2132,6 +2138,9 @@ class KeyboardView(context: Context) : View(context) {
                     scrollY = 0f
                     clipScrollY = 0f
                     trayOpen = false
+                    gridPointer = -1
+                    trayPointer = -1
+                    pressedByPointer.clear()
                     rebuildTargets()
                     requestLayout()
                     invalidate()
