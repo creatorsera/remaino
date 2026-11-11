@@ -12,7 +12,7 @@ enum class MascotPlacement(val key: String) {
 
     companion object {
         fun from(value: String?): MascotPlacement =
-            entries.firstOrNull { it.key == value } ?: TOOLBAR
+            entries.firstOrNull { it.key == value } ?: CURSOR
     }
 }
 
@@ -300,10 +300,13 @@ class KeyboardPrefs(context: Context) {
         if (version < 1) {
             // First run of the old build: nothing to move, just start from defaults.
             if (!prefs.contains(KEY_MASCOT)) editor.putBoolean(KEY_MASCOT, true)
+            if (!prefs.contains(KEY_MASCOT_PLACEMENT)) {
+                editor.putString(KEY_MASCOT_PLACEMENT, MascotPlacement.CURSOR.key)
+            }
         }
         if (version < 2) {
             if (!prefs.contains(KEY_MASCOT_PLACEMENT)) {
-                editor.putString(KEY_MASCOT_PLACEMENT, MascotPlacement.TOOLBAR.key)
+                editor.putString(KEY_MASCOT_PLACEMENT, MascotPlacement.CURSOR.key)
             }
             if (!prefs.contains(KEY_HAPTICS)) editor.putBoolean(KEY_HAPTICS, true)
             if (!prefs.contains(KEY_CLIP_IMAGES)) editor.putBoolean(KEY_CLIP_IMAGES, true)
@@ -315,8 +318,8 @@ class KeyboardPrefs(context: Context) {
         }
         if (version < 3) {
             // The mascot used to sit in a band above the keys, which pushed the whole
-            // keyboard down. It now lives inside the toolbar by default.
-            editor.putString(KEY_MASCOT_PLACEMENT, MascotPlacement.TOOLBAR.key)
+            // keyboard down. It now defaults to sitting at the cursor.
+            editor.putString(KEY_MASCOT_PLACEMENT, MascotPlacement.CURSOR.key)
         }
         editor.putInt(KEY_VERSION, PREFS_VERSION).apply()
     }

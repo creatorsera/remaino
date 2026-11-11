@@ -32,6 +32,7 @@ enum class ToolbarAction {
     MENU, CLOSE, MIC, EMOJI, CLIPBOARD, THEME, LANGUAGE, SETTINGS, BACK, CLIP_PAUSE, CLIP_CLEAR, CLIP_EDIT, COPY_PASTE,
     UNDO, REDO, STICKER, STICKER_STYLE, STICKER_FONT, STICKER_SEND,
     FLOATING, DELETE_WORD, HIDE, TRAY_PREV, TRAY_NEXT,
+    CLIP_SHEET_PASTE, CLIP_SHEET_UNPIN, CLIP_SHEET_EDIT, CLIP_SHEET_DELETE,
 }
 
 /**
@@ -70,6 +71,8 @@ class KeyboardView(context: Context) : View(context) {
         val tabIndex: Int = -1,
         val resultIndex: Int = -1,
         val tray: Boolean = false,
+        /** A short caption for the toolbar shortcut row of the tray. */
+        val trayLabel: String? = null,
     )
 
     private class TrayTile(
@@ -244,6 +247,9 @@ class KeyboardView(context: Context) : View(context) {
 
     private var longPressCandidate: Target? = null
     private var longPressFired: Target? = null
+    private var clipLongPressItem: com.example.keyboard.ClipItem? = null
+    private var clipSheetVisible = false
+    private val sheetRects = ArrayList<RectF>()
     private val longPressRunnable = Runnable {
         val tg = longPressCandidate
         if (tg != null && pressedByPointer.values.any { it === tg }) {
@@ -521,6 +527,18 @@ class KeyboardView(context: Context) : View(context) {
                     action = ToolbarAction.CLIP_EDIT,
                 ),
             )
+            // The long-press action sheet floats above the clip list.
+            if (clipSheetVisible && sheetRects.size == 4) {
+                sheetRects.forEachIndexed { i, r ->
+                    val a = when (i) {
+                        0 -> ToolbarAction.CLIP_SHEET_PASTE
+                        1 -> ToolbarAction.CLIP_SHEET_UNPIN
+                        2 -> ToolbarAction.CLIP_SHEET_EDIT
+                        else -> ToolbarAction.CLIP_SHEET_DELETE
+                    }
+                    targets.add(Target(RectF(r.left, r.top, r.right, r.bottom), action = a))
+                }
+            }
             val top = keysTop()
             contentRect.set(sideMargin, top, w - sideMargin, top + keysHeight())
             return
@@ -566,20 +584,21 @@ class KeyboardView(context: Context) : View(context) {
 
         if (trayOpen) {
             if (trayPage >= trayPageCount) trayPage = 0
-            val actions = listOf(
-                ToolbarAction.EMOJI,
-                ToolbarAction.STICKER,
-                ToolbarAction.CLIPBOARD,
-                ToolbarAction.UNDO,
-                ToolbarAction.REDO,
-                ToolbarAction.SETTINGS,
-            )
-            val startX = dp(60f)
+            var startX = dp(60f)
             val endX = w - dp(16f)
-            val step = (endX - startX) / actions.size
-            actions.forEachIndexed { i, a ->
-                val cx = startX + step * (i + 0.5f)
-                targets.add(Target(RectF(cx - step / 2f, topOffset(), cx + step / 2f, topOffset() + toolbarH), action = a, tray = true))
+            val step = (endX - dp(60f)) / 6f
+            val shortcuts = listOf(
+                ToolbarAction.EMOJI to "Emoji",
+                ToolbarAction.STICKER to "Sticker",
+                ToolbarAction.CLIPBOARD to "Clipboard",
+                ToolbarAction.UNDO to "Undo",
+                ToolbarAction.REDO to "Redo",
+                ToolbarAction.SETTINGS to "Settings",
+            )
+            for ((a, label) in shortcuts) {
+                val cx = startX + step * 0.5f
+                startX = startX + step
+                targets.add(Target(RectF(cx - step / 2f, topOffset(), cx + step / 2f, topOffset() + toolbarH), action = a, tray = true, trayLabel = label))
             }
             addTrayTargets()
         } else {
@@ -808,6 +827,20 @@ class KeyboardView(context: Context) : View(context) {
 
     // ---------- clipboard list ----------
 
+    private fun openClipSheet(item: com.example.keyboard.ClipItem) {
+        clipLongPressItem = item
+        clipSheetVisible = true
+        rebuildTargets()
+        invalidate()
+    }
+
+    private fun closeClipSheet() {
+        clipLongPressItem = null
+        clipSheetVisible = false
+        rebuildTargets()
+        invalidate()
+    }
+
     private fun openClipboard() {
         // Clipboard history stays out of password and private fields.
         if (sensitive) return
@@ -891,6 +924,8 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     private fun tapClip(x: Float, y: Float) {
+        // Tapping a clip card closes an open action sheet first.
+        if (clipSheetVisible) closeClipSheet()
         if (!contentRect.contains(x, y)) return
         val localX = x - contentRect.left
         val localY = y - contentRect.top + clipScrollY
@@ -1192,6 +1227,7 @@ class KeyboardView(context: Context) : View(context) {
             Panel.KEYS -> drawPreviews(canvas, t)
         }
 
+        if (clipSheetVisible) drawClipSheet(canvas, t)
         if (trayOpen) drawTrayGrid(canvas, t)
 
         if (lane) {
@@ -1374,6 +1410,8 @@ class KeyboardView(context: Context) : View(context) {
             drawIcon(canvas, R.drawable.ic_send, cx, cy, dp(22f), t.onAccent)
             return
         }
+        // When listening, the mic button is fully hidden — the animated pill takes its place.
+        if (action == ToolbarAction.MIC && listening) return
         val circular = action == ToolbarAction.MENU ||
             action == ToolbarAction.CLOSE ||
             action == ToolbarAction.BACK ||
@@ -1381,15 +1419,6 @@ class KeyboardView(context: Context) : View(context) {
             action == ToolbarAction.CLIP_EDIT ||
             (action == ToolbarAction.MIC && !trayOpen)
         val pressed = isPressed(tg)
-        if (action == ToolbarAction.MIC && listening) {
-            val now = SystemClock.uptimeMillis()
-            val pulse = (now % 1100L) / 1100f
-            strokePaint.color = ColorUtils.setAlphaComponent(t.accent, (150 * (1f - pulse)).toInt())
-            strokePaint.strokeWidth = dp(1.5f)
-            canvas.drawCircle(cx, cy, dp(16f) + dp(10f) * pulse, strokePaint)
-            fill.color = ColorUtils.setAlphaComponent(t.accent, 40)
-            canvas.drawCircle(cx, cy, dp(22f), fill)
-        }
         if (circular || pressed) {
             fill.color = if (pressed) ColorUtils.blendARGB(t.key, Color.WHITE, 0.18f) else t.key
             canvas.drawCircle(cx, cy, dp(16f), fill)
@@ -1418,6 +1447,10 @@ class KeyboardView(context: Context) : View(context) {
             ToolbarAction.DELETE_WORD -> R.drawable.ic_delete_word
             ToolbarAction.HIDE -> R.drawable.ic_close
             ToolbarAction.TRAY_PREV, ToolbarAction.TRAY_NEXT -> R.drawable.ic_back
+            ToolbarAction.CLIP_SHEET_PASTE -> R.drawable.ic_clipboard
+            ToolbarAction.CLIP_SHEET_UNPIN -> R.drawable.ic_pin
+            ToolbarAction.CLIP_SHEET_EDIT -> R.drawable.ic_edit
+            ToolbarAction.CLIP_SHEET_DELETE -> R.drawable.ic_trash
         }
         drawIcon(canvas, res, cx, cy, dp(24f), t.icon)
     }
@@ -1484,6 +1517,57 @@ class KeyboardView(context: Context) : View(context) {
         canvas.restore()
     }
 
+    private fun drawClipSheet(canvas: Canvas, t: KeyboardTheme) {
+        val item = clipLongPressItem ?: return
+        val cx = contentRect.centerX()
+        val top = contentRect.top + dp(10f)
+        val actions = listOf(
+            "Paste" to { listener?.let { l ->
+                if (item.image == null) l.onPaste(item.text) else l.onPasteImage(item)
+            } },
+            "Unpin" to { clipStore.togglePin(item); reloadClipboard() },
+            "Edit" to { clipEditMode = true; reloadClipboard() },
+            "Delete" to { clipStore.remove(item); reloadClipboard() },
+        )
+        val sheetW = contentRect.width() - dp(20f)
+        val sheetH = actions.size * dp(52f) + dp(12f)
+        val left = cx - sheetW / 2f
+        tmpRect.set(left, top, left + sheetW, top + sheetH)
+        fill.color = t.specialKey
+        canvas.drawRoundRect(tmpRect, dp(16f), dp(16f), fill)
+        strokePaint.color = ColorUtils.setAlphaComponent(t.accent, 60)
+        strokePaint.strokeWidth = dp(1f)
+        canvas.drawRoundRect(tmpRect, dp(16f), dp(16f), strokePaint)
+
+        // Store sheet geometry for hit-testing.
+        sheetRects.clear()
+        for (i in actions.indices) {
+            val itemTop = top + dp(12f) + i * dp(52f)
+            val cy = itemTop + dp(26f)
+            sheetRects.add(RectF(left, itemTop, left + sheetW, itemTop + dp(52f)))
+            // Icon
+            val iconRes = when (i) {
+                0 -> R.drawable.ic_clipboard
+                1 -> R.drawable.ic_pin
+                2 -> R.drawable.ic_edit
+                else -> R.drawable.ic_trash
+            }
+            drawIcon(canvas, iconRes, left + dp(28f), cy, dp(20f), t.icon)
+            textPaint.textSize = sp(14f)
+            textPaint.color = t.text
+            textPaint.textAlign = Paint.Align.LEFT
+            val label = when (i) { 0 -> "Paste"; 1 -> "Unpin"; 2 -> "Edit"; else -> "Delete" }
+            canvas.drawText(label, left + dp(56f), cy + sp(5f), textPaint)
+            // Separator
+            if (i < actions.size - 1) {
+                strokePaint.color = ColorUtils.setAlphaComponent(t.textDim, 40)
+                strokePaint.strokeWidth = dp(0.5f)
+                canvas.drawLine(left + dp(16f), itemTop + dp(52f), left + sheetW - dp(16f), itemTop + dp(52f), strokePaint)
+            }
+        }
+    }
+    
+
     private fun drawTrayGrid(canvas: Canvas, t: KeyboardTheme) {
         // A scrim so the keys underneath never bleed through.
         fill.color = ColorUtils.blendARGB(t.base, Color.BLACK, 0.12f)
@@ -1492,8 +1576,33 @@ class KeyboardView(context: Context) : View(context) {
 
         for (tg in targets) {
             if (!tg.tray) continue
-            val tile = trayTiles.firstOrNull { it.action == tg.action } ?: continue
             val r = tg.rect
+
+            // The toolbar shortcut row: circular icon + small caption below it.
+            if (tg.trayLabel != null) {
+                val cx = r.centerX()
+                val cy = r.centerY()
+                val iconRes = when (tg.action) {
+                    ToolbarAction.EMOJI -> R.drawable.ic_smile
+                    ToolbarAction.STICKER -> R.drawable.ic_sticker
+                    ToolbarAction.CLIPBOARD -> R.drawable.ic_clipboard
+                    ToolbarAction.UNDO -> R.drawable.ic_undo
+                    ToolbarAction.REDO -> R.drawable.ic_redo
+                    ToolbarAction.SETTINGS -> R.drawable.ic_sliders
+                    else -> R.drawable.ic_grid
+                }
+                val pressed = isPressed(tg)
+                fill.color = if (pressed) ColorUtils.blendARGB(t.key, Color.WHITE, 0.18f) else t.key
+                canvas.drawCircle(cx, cy, dp(17f), fill)
+                drawIcon(canvas, iconRes, cx, cy, dp(20f), t.icon)
+                textPaint.textSize = sp(10f)
+                textPaint.color = t.textDim
+                textPaint.textAlign = Paint.Align.CENTER
+                canvas.drawText(tg.trayLabel, cx, r.bottom - dp(4f), textPaint)
+                continue
+            }
+
+            val tile = trayTiles.firstOrNull { it.action == tg.action } ?: continue
             fill.color = if (isPressed(tg)) {
                 ColorUtils.blendARGB(t.card, Color.WHITE, 0.10f)
             } else {
@@ -1773,6 +1882,20 @@ class KeyboardView(context: Context) : View(context) {
                         longPressCandidate = tg
                         longPressFired = null
                         uiHandler.postDelayed(longPressRunnable, 400L)
+                    } else if (panel == Panel.CLIPBOARD && tg.action == null) {
+                        // Long-press on a clip card: show the action sheet.
+                        uiHandler.postDelayed({
+                            if (panel == Panel.CLIPBOARD) {
+                                val localX = x - contentRect.left
+                                val localY = y - contentRect.top + clipScrollY
+                                val card = clipCards.firstOrNull {
+                                    localX >= it.left && localX < it.left + it.width &&
+                                        localY >= it.top && localY < it.top + it.height
+                                }
+                                val item = card?.item
+                                if (item != null) openClipSheet(item)
+                            }
+                        }, 500L)
                     }
                     invalidate()
                 }
@@ -1991,6 +2114,8 @@ class KeyboardView(context: Context) : View(context) {
                 } else {
                     panel = Panel.KEYS
                     scrollY = 0f
+                    clipScrollY = 0f
+                    requestLayout()
                     rebuildTargets()
                     invalidate()
                 }
@@ -2029,6 +2154,29 @@ class KeyboardView(context: Context) : View(context) {
                 rebuildTargets()
                 invalidate()
                 if (text != null) listener?.onPaste(text)
+            }
+            ToolbarAction.CLIP_SHEET_PASTE, ToolbarAction.CLIP_SHEET_UNPIN,
+            ToolbarAction.CLIP_SHEET_EDIT, ToolbarAction.CLIP_SHEET_DELETE -> {
+                val item = clipLongPressItem
+                when (action) {
+                    ToolbarAction.CLIP_SHEET_PASTE -> {
+                        if (item != null) {
+                            if (item.image == null) listener?.onPaste(item.text) else listener?.onPasteImage(item)
+                        }
+                    }
+                    ToolbarAction.CLIP_SHEET_UNPIN -> {
+                        if (item != null) clipStore.togglePin(item)
+                    }
+                    ToolbarAction.CLIP_SHEET_EDIT -> {
+                        clipEditMode = true
+                    }
+                    ToolbarAction.CLIP_SHEET_DELETE -> {
+                        if (item != null) clipStore.remove(item)
+                    }
+                    else -> Unit
+                }
+                if (action != ToolbarAction.CLIP_SHEET_PASTE) reloadClipboard()
+                closeClipSheet()
             }
             else -> listener?.onToolbarAction(action)
         }
