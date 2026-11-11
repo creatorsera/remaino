@@ -249,6 +249,7 @@ class KeyboardView(context: Context) : View(context) {
     private var longPressFired: Target? = null
     private var clipLongPressItem: com.example.keyboard.ClipItem? = null
     private var clipSheetVisible = false
+    private var pendingDeleteItem: com.example.keyboard.ClipItem? = null
     private val sheetRects = ArrayList<RectF>()
     private val longPressRunnable = Runnable {
         val tg = longPressCandidate
@@ -852,9 +853,11 @@ class KeyboardView(context: Context) : View(context) {
         scrollY = 0f
         clipScrollY = 0f
         clipEditMode = false
-        requestLayout()
+        clipSheetVisible = false
+        trayOpen = false
         rebuildTargets()
         reloadClipboard()
+        requestLayout()
         invalidate()
     }
 
@@ -1219,7 +1222,13 @@ class KeyboardView(context: Context) : View(context) {
                 tg.resultIndex >= 0 -> drawResult(canvas, tg, t)
                 tg.tabIndex >= 0 -> drawTab(canvas, tg, t)
                 action != null -> if (action != ToolbarAction.COPY_PASTE && !tg.tray) {
-                    drawToolbarButton(canvas, tg, action, t)
+                    // The mic button hides behind the suggestion row (not listening,
+                    // no undo pill, no copied chip) so only draw it when no chip targets
+                    // overlap its position.
+                    val overlapsChips = tg.rect.left >= dp(50f) && tg.rect.right <= w - dp(50f)
+                    if (!overlapsChips || (bulkUndo || bulkRedo || listening || copiedChip != null)) {
+                        drawToolbarButton(canvas, tg, action, t)
+                    }
                 }
                 key != null -> drawKey(canvas, tg, key, t)
             }
@@ -1562,7 +1571,12 @@ class KeyboardView(context: Context) : View(context) {
             textPaint.textSize = sp(14f)
             textPaint.color = t.text
             textPaint.textAlign = Paint.Align.LEFT
-            val label = when (i) { 0 -> "Paste"; 1 -> "Unpin"; 2 -> "Edit"; else -> "Delete" }
+            val label = when (i) {
+                0 -> "Paste"
+                1 -> "Unpin"
+                2 -> "Edit"
+                else -> if (pendingDeleteItem == item) "Confirm delete?" else "Delete"
+            }
             canvas.drawText(label, left + dp(56f), cy + sp(5f), textPaint)
             // Separator
             if (i < actions.size - 1) {
@@ -1584,7 +1598,7 @@ class KeyboardView(context: Context) : View(context) {
             if (!tg.tray) continue
             val r = tg.rect
 
-            // The toolbar shortcut row: circular icon + small caption below it.
+            // The toolbar shortcut row: icon-only circles, no caption.
             if (tg.trayLabel != null) {
                 val cx = r.centerX()
                 val cy = r.centerY()
@@ -1601,10 +1615,6 @@ class KeyboardView(context: Context) : View(context) {
                 fill.color = if (pressed) ColorUtils.blendARGB(t.key, Color.WHITE, 0.18f) else t.key
                 canvas.drawCircle(cx, cy, dp(17f), fill)
                 drawIcon(canvas, iconRes, cx, cy, dp(20f), t.icon)
-                textPaint.textSize = sp(10f)
-                textPaint.color = t.textDim
-                textPaint.textAlign = Paint.Align.CENTER
-                canvas.drawText(tg.trayLabel, cx, r.bottom - dp(4f), textPaint)
                 continue
             }
 
@@ -2121,8 +2131,9 @@ class KeyboardView(context: Context) : View(context) {
                     panel = Panel.KEYS
                     scrollY = 0f
                     clipScrollY = 0f
-                    requestLayout()
+                    trayOpen = false
                     rebuildTargets()
+                    requestLayout()
                     invalidate()
                 }
             }
@@ -2177,11 +2188,20 @@ class KeyboardView(context: Context) : View(context) {
                         clipEditMode = true
                     }
                     ToolbarAction.CLIP_SHEET_DELETE -> {
-                        if (item != null) clipStore.remove(item)
+                        if (item != null) {
+                            // First tap marks the item as pending deletion so a second
+                            // tap confirms it instead of deleting immediately.
+                            if (pendingDeleteItem == item) {
+                                clipStore.remove(item)
+                                pendingDeleteItem = null
+                            } else {
+                                pendingDeleteItem = item
+                            }
+                        }
                     }
                     else -> Unit
                 }
-                if (action != ToolbarAction.CLIP_SHEET_PASTE) reloadClipboard()
+                if (action != ToolbarAction.CLIP_SHEET_PASTE && action != ToolbarAction.CLIP_SHEET_DELETE) reloadClipboard()
                 closeClipSheet()
             }
             else -> listener?.onToolbarAction(action)
