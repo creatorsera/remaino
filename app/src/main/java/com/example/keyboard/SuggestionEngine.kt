@@ -31,25 +31,28 @@ class SuggestionEngine(private val builtIn: List<String> = COMMON_WORDS) {
             .filter { it.key.startsWith(p) && it.key != p && it.key !in hidden }
             .sortedByDescending { it.value }
             .map { it.key }
+        // Prefix matches always win; search the full built-in list so longer words still get results.
         val fromBuiltIn = builtIn.asSequence()
             .filter { it.startsWith(p) && it != p && it !in hidden }
         val prefixMatches = (learned + fromPersonal + fromBuiltIn).distinct().take(limit).toList()
         if (prefixMatches.isNotEmpty()) return prefixMatches
 
-        // Nothing starts with this prefix: offer near-misses (one edit away) instead
-        // of leaving the bar empty. This is the "gibberish" fallback.
+        // Nothing starts with this prefix: offer near-misses instead of leaving the
+        // bar empty. Allow one edit when the word is short, two when it is longer,
+        // so "foour" still reaches "four" or "floor".
         if (p.length < 3) return emptyList()
+        val maxEdits = if (p.length >= 7) 2 else 1
         val near = ArrayList<String>()
         for (entry in personal.entries.sortedByDescending { it.value }) {
             if (entry.key in hidden) continue
-            if (withinOneEdit(p, entry.key)) {
+            if (withinEdits(p, entry.key, maxEdits)) {
                 near.add(entry.key)
                 if (near.size >= limit) return near.distinct()
             }
         }
         for (word in builtIn.asSequence()) {
             if (word in hidden || word == p) continue
-            if (withinOneEdit(p, word)) {
+            if (withinEdits(p, word, maxEdits)) {
                 near.add(word)
                 if (near.size >= limit) break
             }
@@ -58,9 +61,12 @@ class SuggestionEngine(private val builtIn: List<String> = COMMON_WORDS) {
     }
 
     /** True when [a] and [b] differ by at most one insert, delete, swap or substitute. */
-    fun withinOneEdit(a: String, b: String): Boolean {
+    fun withinOneEdit(a: String, b: String): Boolean = withinEdits(a, b, 1)
+
+    /** True when [a] and [b] differ by at most [max] insert, delete, swap or substitute. */
+    fun withinEdits(a: String, b: String, max: Int): Boolean {
         if (a == b) return true
-        if (kotlin.math.abs(a.length - b.length) > 1) return false
+        if (kotlin.math.abs(a.length - b.length) > max) return false
         var i = 0
         var j = 0
         var edits = 0
@@ -71,7 +77,7 @@ class SuggestionEngine(private val builtIn: List<String> = COMMON_WORDS) {
                 continue
             }
             edits++
-            if (edits > 1) return false
+            if (edits > max) return false
             when {
                 a.length > b.length -> i++
                 a.length < b.length -> j++
@@ -89,7 +95,7 @@ class SuggestionEngine(private val builtIn: List<String> = COMMON_WORDS) {
                 }
             }
         }
-        return edits + (a.length - i) + (b.length - j) <= 1
+        return edits + (a.length - i) + (b.length - j) <= max
     }
 
     companion object {

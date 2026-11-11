@@ -621,25 +621,29 @@ class KeyboardView(context: Context) : View(context) {
                     ),
                 )
             }
+            val gap = dp(6f)
             if (bulkUndo || bulkRedo) {
+                val pillL = regionL + gap
+                val pillR = regionR - gap
                 targets.add(
                     Target(
-                        RectF(regionL, cy - dp(16f), regionR, cy + dp(16f)),
+                        RectF(pillL, cy - dp(16f), pillR, cy + dp(16f)),
                         action = if (bulkRedo) ToolbarAction.REDO else ToolbarAction.UNDO,
                     ),
                 )
             } else if (copiedChip != null) {
+                val pillL = regionL + gap
+                val pillR = regionR - gap
                 targets.add(
                     Target(
-                        RectF(regionL, cy - dp(18f), regionR, cy + dp(18f)),
+                        RectF(pillL, cy - dp(18f), pillR, cy + dp(18f)),
                         action = ToolbarAction.COPY_PASTE,
                     ),
                 )
             } else {
-                val gap = dp(6f)
-                val chipW = (regionR - regionL - 2 * gap) / 3f
+                val chipW = ((regionR - gap) - (regionL + gap) - 2 * gap) / 3f
                 for (i in 0 until 3) {
-                    val l = regionL + i * (chipW + gap)
+                    val l = regionL + gap + i * (chipW + gap)
                     targets.add(Target(RectF(l, cy - dp(16f), l + chipW, cy + dp(16f)), suggestionIndex = i))
                 }
             }
@@ -1458,21 +1462,23 @@ class KeyboardView(context: Context) : View(context) {
     private fun drawChip(canvas: Canvas, tg: Target, t: KeyboardTheme) {
         val label = suggestions.getOrNull(tg.suggestionIndex) ?: return
         val highlighted = tg.suggestionIndex == 1
-        val base = if (highlighted) t.inverted else t.key
-        fill.color = if (isPressed(tg)) ColorUtils.blendARGB(base, Color.GRAY, 0.2f) else base
         val r = tg.rect
-        canvas.drawRoundRect(r, r.height() / 2f, r.height() / 2f, fill)
-        val maxTextW = r.width() - dp(16f)
-        var size = sp(15f)
+        // Draw a flat, borderless suggestion chip — text in the toolbar lane, no bubble.
+        fill.color = if (isPressed(tg)) ColorUtils.blendARGB(t.base, t.key, 0.5f) else t.toolbar
+        canvas.drawRect(r.left, r.top + dp(4f), r.right, r.bottom - dp(4f), fill)
+        val maxTextW = r.width() - dp(10f)
+        var size = sp(14f)
         textPaint.textSize = size
         while (size > sp(10f) && textPaint.measureText(label) > maxTextW) {
             size -= sp(0.5f)
             textPaint.textSize = size
         }
-        textPaint.color = if (highlighted) t.onInverted else t.text
+        textPaint.color = if (highlighted) t.accent else t.text
         val shown = TextUtils.ellipsize(label, textPaint, maxTextW, TextUtils.TruncateAt.END)
+        textPaint.textAlign = Paint.Align.LEFT
         val y = r.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f
-        canvas.drawText(shown, 0, shown.length, r.centerX(), y, textPaint)
+        canvas.drawText(shown, 0, shown.length, r.left + dp(8f), y, textPaint)
+        textPaint.textAlign = Paint.Align.CENTER
     }
 
     private fun drawTab(canvas: Canvas, tg: Target, t: KeyboardTheme) {
