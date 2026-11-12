@@ -8,17 +8,17 @@ plugins {
  * updater accepts the next release without relying on CI run numbers.
  */
 fun semverCode(name: String): Int {
-    val parts = name.removePrefix("v").split(".")
-    val major = parts.getOrNull(0)?.toIntOrNull() ?: 0
-    val minor = parts.getOrNull(1)?.toIntOrNull() ?: 0
-    val patch = parts.getOrNull(2)?.toIntOrNull() ?: 0
-    return (major * 10000 + minor * 100 + patch).coerceAtLeast(1)
+    fun part(index: Int): Int =
+        name.removePrefix("v").split(".").getOrNull(index)
+            ?.takeWhile { it.isDigit() }
+            ?.toIntOrNull() ?: 0
+    return (part(0) * 10000 + part(1) * 100 + part(2)).coerceAtLeast(1)
 }
 
 val appVersionName = System.getenv("VERSION_NAME")
     ?.removePrefix("v")
     ?.takeIf { it.isNotBlank() }
-    ?: "0.7.0"
+    ?: "0.7.7"
 val appVersionCode = System.getenv("VERSION_CODE")?.toIntOrNull()
     ?: maxOf(semverCode(appVersionName), 5)
 

@@ -727,10 +727,11 @@ class SettingsActivity : Activity() {
         } catch (e: Exception) {
             "0"
         }
+        val versionCode = installedVersionCode()
         val about = card()
         about.addView(sectionHeader("About"))
         about.addView(
-            label("Remino v$version", 13f, textDim, false).also { it.topPad(6) },
+            label("Remino v$version ($versionCode)", 13f, textDim, false).also { it.topPad(6) },
         )
         about.addView(
             label(
