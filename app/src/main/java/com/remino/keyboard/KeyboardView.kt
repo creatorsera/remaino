@@ -303,8 +303,9 @@ class KeyboardView(context: Context) : View(context) {
         TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, v, resources.displayMetrics)
 
     private val toolbarH: Float get() = dp(48f)
-    /** Height of the suggestion band, which is the top slice of the keyboard. */
-    private val dockCardH: Float get() = dp(50f)
+    /** Height of the floating capsule, and the air gap under it. */
+    private val dockCardH: Float get() = dp(54f)
+    private val dockGap: Float get() = dp(9f)
     private val rowH: Float get() = dp(46f * heightScale)
     private val rowGap: Float get() = dp(4f)
     private val sideMargin: Float get() = dp(1.5f)
@@ -334,12 +335,11 @@ class KeyboardView(context: Context) : View(context) {
     private fun rowCount(): Int = Layouts.rowCount(showNumberRow)
 
     /**
-     * The suggestion band is part of the keyboard surface: the shell colour runs
-     * straight from the band into the key bed, so the card sits *on* the keyboard
-     * instead of hovering above it.
+     * The capsule floats in its own band above the key bed; the band is transparent,
+     * so the app shows through the gap and the keyboard starts below it.
      */
     private fun keyboardTop(): Float =
-        if (dockMode()) topOffset() + dockCardH else topOffset() + toolbarH
+        if (dockMode()) topOffset() + dockCardH + dockGap else topOffset() + toolbarH
 
     private fun keysTop(): Float = keyboardTop() + topPad
     private fun keysHeight(): Float = rowCount() * rowH + (rowCount() - 1) * rowGap
@@ -794,17 +794,17 @@ class KeyboardView(context: Context) : View(context) {
     /** The card has grown into the options screen or a panel. */
     private fun dockOpen(): Boolean = dockMode() && (trayOpen || panel != Panel.KEYS)
 
-    /** Full-width suggestion band, docked to the top of the key bed. */
+    /** Full-width capsule, floating above the key bed. */
     private fun dockCardRect(): RectF =
-        RectF(0f, topOffset(), width.toFloat(), topOffset() + dockCardH)
+        RectF(sideMargin, topOffset(), width - sideMargin, topOffset() + dockCardH)
 
     private fun dockMascotRect(): RectF {
         val card = dockCardRect()
         val side = card.height() - dp(12f)
         return RectF(
-            card.left + dp(10f),
+            card.left + dp(8f),
             card.centerY() - side / 2f,
-            card.left + dp(10f) + side,
+            card.left + dp(8f) + side,
             card.centerY() + side / 2f,
         )
     }
@@ -1454,9 +1454,10 @@ class KeyboardView(context: Context) : View(context) {
             tmpRect.set(w / 2f - dp(22f), dp(7f), w / 2f + dp(22f), dp(11f))
             canvas.drawRoundRect(tmpRect, dp(2f), dp(2f), fill)
         } else {
-            // The keyboard is one continuous surface. The suggestion band is its top
-            // slice, and an open panel grows out of that same surface.
-            drawTopRounded(canvas, h, w, r, t.base, topOffset())
+            // Closed: the capsule floats and the strip under it is transparent.
+            // Open: the panel is the keyboard surface, so paint from the very top.
+            val shellTop = if (dock && !dockExpanded) keyboardTop() else topOffset()
+            drawTopRounded(canvas, h, w, r, t.base, shellTop)
             if (!dock) drawTopRounded(canvas, topOffset() + toolbarH, w, r, t.toolbar, topOffset())
         }
         if (panel == Panel.CLIPBOARD && !dock) {
@@ -1473,6 +1474,20 @@ class KeyboardView(context: Context) : View(context) {
             drawBulkUndoPill(canvas, t, w)
         } else if (!dock && copiedChip != null && !trayOpen && captureMode == Capture.NONE) {
             drawCopiedChip(canvas, t, w)
+        }
+
+        if (dock) {
+            if (dockExpanded) {
+                // Keep the key bed visible beneath the unfolding panel so the surface
+                // reads as one continuous keyboard, not a curtain over a hole.
+                for (tg in underPanelKeys) {
+                    val key = tg.key ?: continue
+                    drawKey(canvas, tg, key, t)
+                }
+                drawDockCurtain(canvas, t)
+            } else {
+                drawDockCard(canvas, t)
+            }
         }
 
         for (tg in targets) {
@@ -1495,20 +1510,6 @@ class KeyboardView(context: Context) : View(context) {
                     }
                 }
                 key != null -> drawKey(canvas, tg, key, t)
-            }
-        }
-
-        if (dock) {
-            if (dockExpanded) {
-                // Keep the key bed visible beneath the unfolding panel so the surface
-                // reads as one continuous keyboard, not a curtain over a hole.
-                for (tg in underPanelKeys) {
-                    val key = tg.key ?: continue
-                    drawKey(canvas, tg, key, t)
-                }
-                drawDockCurtain(canvas, t)
-            } else {
-                drawDockCard(canvas, t)
             }
         }
 
@@ -1661,12 +1662,12 @@ class KeyboardView(context: Context) : View(context) {
 
     private fun drawDockCard(canvas: Canvas, t: KeyboardTheme) {
         val card = dockCardRect()
-        // The base surface is already painted, so the band is just its top slice.
-        // One hairline gives the suggestions an edge without turning the card into
-        // a separate floating object.
-        strokePaint.color = ColorUtils.blendARGB(t.base, t.text, 0.07f)
-        strokePaint.strokeWidth = dp(1f)
-        canvas.drawLine(dp(14f), card.bottom - dp(0.5f), width - dp(14f), card.bottom - dp(0.5f), strokePaint)
+        // A true capsule: the radius is half the height, independent of the
+        // keyboard's outer corner radius. One flat shell colour, no shadow/border.
+        val rr = card.height() / 2f
+        fill.shader = null
+        fill.color = t.base
+        canvas.drawRoundRect(card, rr, rr, fill)
 
         if (mascotEnabled) {
             drawDockMascot(canvas, t, dockMascotRect())
