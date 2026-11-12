@@ -1,6 +1,5 @@
 package com.remino.keyboard
 
-import android.animation.ValueAnimator
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
@@ -36,7 +35,6 @@ import android.widget.Toast
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import org.json.JSONObject
-import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -69,20 +67,12 @@ class SettingsActivity : Activity() {
 
     private lateinit var expireButton: Button
     private lateinit var clipPreview: LinearLayout
-    private lateinit var updateIcon: WavyCircle
-    private lateinit var updateTitle: TextView
-    private lateinit var updateSub: TextView
 
     private lateinit var heightLabel: TextView
     private lateinit var paddingLabel: TextView
     private val mascotChips = ArrayList<TextView>()
     private val appearanceChips = ArrayList<TextView>()
     private var floatingSwitch: Switch? = null
-
-    private var checkingUpdate = false
-    private var latestRelease: UpdateChecker.Release? = null
-    private var downloadingUpdate = false
-    private var waitingForInstallPermission = false
 
     private var pendingPassword: CharArray? = null
     private var pendingImport: ByteArray? = null
@@ -239,7 +229,6 @@ class SettingsActivity : Activity() {
             }
         }
         refreshPageData()
-        if (page == SettingsPage.UPDATES) maybeAutoCheckUpdates()
     }
 
     private fun openPage(target: SettingsPage) {
@@ -268,11 +257,6 @@ class SettingsActivity : Activity() {
     override fun onResume() {
         super.onResume()
         refreshPageData()
-        if (waitingForInstallPermission && canInstallPackages()) {
-            waitingForInstallPermission = false
-            latestRelease?.let { beginUpdate(it) }
-        }
-        maybeAutoCheckUpdates()
     }
 
     /** Refreshes only the widgets that exist on the page currently shown. */
@@ -300,7 +284,6 @@ class SettingsActivity : Activity() {
         // block. Each is refreshed only when it is on screen.
         if (::chart.isInitialized || ::spark.isInitialized) refreshStats()
         if (::clipPreview.isInitialized) refreshClipboardPreview()
-        if (::updateTitle.isInitialized) refreshUpdateState()
     }
 
     // ------------------------------------------------------------------ top
@@ -385,7 +368,7 @@ class SettingsActivity : Activity() {
         more.addView(divider())
         more.addView(categoryRow("Backup & data", "Export or restore an encrypted backup", R.drawable.ic_grid, SettingsPage.DATA))
         more.addView(divider())
-        more.addView(categoryRow("Updates", "Check for a new Remino release", R.drawable.ic_send, SettingsPage.UPDATES))
+        more.addView(categoryRow("Updates", "Get the latest Remino release", R.drawable.ic_send, SettingsPage.UPDATES))
         pane.addView(more)
     }
 
@@ -734,7 +717,9 @@ class SettingsActivity : Activity() {
         )
         about.addView(
             label(
-                "Releases are published on GitHub. The app only contacts GitHub when you ask it to check.",
+                "Remino is distributed outside Google Play. The button above opens the " +
+                    "download page in your browser; Chrome handles the download and Android " +
+                    "installs the APK. The app itself never uses the internet.",
                 12f, textFaint, false,
             ).also { it.topPad(6) },
         )
@@ -1025,161 +1010,32 @@ class SettingsActivity : Activity() {
 
     private fun updateCard(): LinearLayout = card().apply {
         val row = rowShell {
-            updateIcon = WavyCircle(this@SettingsActivity).apply {
-                layoutParams = LinearLayout.LayoutParams(dp(34), dp(34))
-                accent = lime
-                track = raised
+            val icon = ImageView(this@SettingsActivity).apply {
+                setImageResource(R.drawable.ic_send)
+                imageTintList = ColorStateList.valueOf(lime)
+                layoutParams = LinearLayout.LayoutParams(dp(22), dp(22))
             }
-            addView(updateIcon)
+            addView(icon)
             val body = LinearLayout(this@SettingsActivity).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(12), 0, 0, 0)
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             }
-            updateTitle = label("Check for updates", 14f, textMain, true)
-            updateSub = label(updateSubLabel(), 11f, textFaint, false)
-            body.addView(updateTitle)
-            body.addView(updateSub)
+            body.addView(label("Get the latest version", 14f, textMain, true))
+            body.addView(label("Downloads open in Chrome", 11f, textFaint, false))
             addView(body)
         }
-        row.setOnClickListener { onUpdateTapped() }
+        row.setOnClickListener { openUpdatePage() }
         addView(row)
     }
 
-    private fun updateSubLabel(): String {
-        val last = options.lastUpdateCheck
-        if (last == 0L) return "Checked once a week, or whenever you ask"
-        val fmt = SimpleDateFormat("d MMM", Locale.getDefault())
-        return "Last checked ${fmt.format(last)} · once a week"
-    }
-
-    private fun onUpdateTapped() {
-        if (checkingUpdate || downloadingUpdate) return
-        val release = latestRelease
-        if (release != null) {
-            beginUpdate(release)
-            return
+    /** Opens the Cloudflare-hosted download page; Chrome does the download. */
+    private fun openUpdatePage() {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(UPDATE_URL)))
+        } catch (e: Exception) {
+            toast("No browser found. Open $UPDATE_URL")
         }
-        checkForUpdates()
-    }
-
-    private fun canInstallPackages(): Boolean =
-        Build.VERSION.SDK_INT < 26 || packageManager.canRequestPackageInstalls()
-
-    private fun beginUpdate(release: UpdateChecker.Release) {
-        if (downloadingUpdate) return
-        if (release.apkUrl == null || release.checksumUrl == null) {
-            updateTitle.text = "Manual update needed"
-            updateSub.text = "This release has no verifiable APK. Opening GitHub…"
-            openReleasePage(release)
-            return
-        }
-        if (!canInstallPackages()) {
-            waitingForInstallPermission = true
-            AlertDialog.Builder(this, R.style.ReminoDialog)
-                .setTitle("Allow Remino to install updates")
-                .setMessage(
-                    "Android needs your permission before an app can install an update. " +
-                        "Turn on \"Allow from this source\", then come back and tap the update again.",
-                )
-                .setPositiveButton("Open settings") { _, _ ->
-                    try {
-                        startActivity(
-                            Intent(
-                                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                                Uri.parse("package:$packageName"),
-                            ),
-                        )
-                    } catch (e: Exception) {
-                        waitingForInstallPermission = false
-                        toast("Open Settings › Apps › Special access › Install unknown apps.")
-                    }
-                }
-                .setNegativeButton("Not now") { _, _ -> waitingForInstallPermission = false }
-                .show()
-            return
-        }
-        downloadUpdate(release)
-    }
-
-    private fun downloadUpdate(release: UpdateChecker.Release) {
-        downloadingUpdate = true
-        latestRelease = release
-        updateIcon.progress = 0f
-        updateIcon.start()
-        updateTitle.text = "Downloading update…"
-        updateSub.text = "From GitHub · ${release.tag}"
-        val dir = File(cacheDir, "updates").apply { mkdirs() }
-        dir.listFiles()?.forEach { if (it.name.endsWith(".apk")) it.delete() }
-        val safeTag = release.tag.replace(Regex("[^A-Za-z0-9._-]"), "_")
-        val target = File(dir, "remaino-$safeTag.apk")
-        Thread {
-            var error: String? = null
-            var signerOk = true
-            var apk: File? = null
-            try {
-                val downloaded = UpdateChecker.download(release, target) { progress ->
-                    runOnUiThread {
-                        if (downloadingUpdate) {
-                            updateIcon.progress = if (progress < 0) -1f else progress / 100f
-                            updateSub.text = if (progress < 0) {
-                                "From GitHub · ${release.tag}"
-                            } else {
-                                "Downloading… $progress%"
-                            }
-                        }
-                    }
-                }
-                apk = downloaded
-                val info = UpdateChecker.inspectApk(this, downloaded)
-                    ?: throw UpdateException("The downloaded file is not an APK.")
-                if (info.packageName != packageName) {
-                    throw UpdateException("The downloaded file belongs to a different app.")
-                }
-                val installedCode = installedVersionCode()
-                if (info.versionCode <= installedCode) {
-                    throw UpdateException(
-                        "This release is not newer than the installed build. " +
-                            "Uninstall this build first, or open the release page.",
-                    )
-                }
-                signerOk = UpdateChecker.sameSigner(this, downloaded)
-            } catch (e: Exception) {
-                error = e.message ?: "Update failed."
-                apk?.delete()
-            }
-            val finalError = error
-            val finalApk = apk
-            val finalSignerOk = signerOk
-            runOnUiThread {
-                downloadingUpdate = false
-                updateIcon.progress = -1f
-                updateIcon.stop()
-                if (finalError != null || finalApk == null) {
-                    updateTitle.text = "Update failed"
-                    updateSub.text = finalError ?: "Update failed. Tap to retry."
-                    latestRelease = release
-                } else if (!finalSignerOk) {
-                    updateTitle.text = "Manual install needed"
-                    updateSub.text = "This build uses a different signing key"
-                    AlertDialog.Builder(this, R.style.ReminoDialog)
-                        .setTitle("Different signing key")
-                        .setMessage(
-                            "The installed Remino was signed with another key, so Android cannot " +
-                                "install this update over it. Download it from the release page, " +
-                                "uninstall Remino, then install the new APK. Your settings and " +
-                                "clipboard live on this phone and will be removed when you uninstall.",
-                        )
-                        .setPositiveButton("Open release page") { _, _ -> openReleasePage(release) }
-                        .setNegativeButton("Cancel", null)
-                        .show()
-                } else {
-                    updateTitle.text = "Update ready · v${release.tag}"
-                    updateSub.text = "Finish in the Android installer"
-                    launchInstaller(finalApk)
-                }
-            }
-        }.start()
     }
 
     private fun installedVersionCode(): Long = try {
@@ -1192,105 +1048,6 @@ class SettingsActivity : Activity() {
         }
     } catch (e: Exception) {
         0L
-    }
-
-    private fun launchInstaller(file: File) {
-        try {
-            // A private PackageInstaller session: no other app can intercept the APK.
-            UpdateInstaller.install(this, file)
-        } catch (e: Exception) {
-            toast("Could not start the installer. The APK is in the app cache.")
-        }
-    }
-
-    private fun openReleasePage(release: UpdateChecker.Release) {
-        try {
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(release.pageUrl)))
-        } catch (e: Exception) {
-            toast("Could not open the release page.")
-        }
-    }
-
-    private fun checkForUpdates() {
-        if (!::updateTitle.isInitialized) return
-        if (checkingUpdate || downloadingUpdate) return
-        checkingUpdate = true
-        // Record the attempt immediately, so being offline cannot cause a retry storm.
-        options.lastUpdateCheck = System.currentTimeMillis()
-        updateIcon.progress = -1f
-        updateIcon.start()
-        updateTitle.text = "Checking for updates…"
-        updateSub.text = "Talking to GitHub only"
-        Thread {
-            val result = UpdateChecker.checkLatest()
-            val installed = try {
-                packageManager.getPackageInfo(packageName, 0).versionName ?: "0"
-            } catch (e: Exception) {
-                "0"
-            }
-            runOnUiThread {
-                checkingUpdate = false
-                updateIcon.stop()
-                if (result is UpdateChecker.Check.Found) updateIcon.showDone()
-                latestRelease = null
-                when (result) {
-                    is UpdateChecker.Check.NoRelease -> {
-                        updateTitle.text = "No releases yet"
-                        updateSub.text = result.message
-                    }
-                    is UpdateChecker.Check.Failed -> {
-                        updateTitle.text = "Check for updates"
-                        updateSub.text = "Couldn't check updates: ${result.message}. Tap to try again."
-                    }
-                    is UpdateChecker.Check.Found -> {
-                        val release = result.release
-                        if (UpdateChecker.isNewer(release.tag, installed)) {
-                            latestRelease = release
-                            updateTitle.text = "Update available · v${release.tag}"
-                            updateSub.text = if (release.apkUrl != null && release.checksumUrl != null) {
-                                "Tap to download and install"
-                            } else {
-                                "Tap to open the release page"
-                            }
-                        } else {
-                            updateTitle.text = "You're up to date"
-                            updateSub.text = "Remino v$installed"
-                        }
-                    }
-                }
-            }
-        }.start()
-    }
-
-    /** After the installer returns, stop offering an update that is already installed. */
-    private fun refreshUpdateState() {
-        val release = latestRelease ?: return
-        if (checkingUpdate || downloadingUpdate) return
-        val installed = try {
-            packageManager.getPackageInfo(packageName, 0).versionName ?: "0"
-        } catch (e: Exception) {
-            "0"
-        }
-        if (!UpdateChecker.isNewer(release.tag, installed)) {
-            latestRelease = null
-            updateTitle.text = "You're up to date"
-            updateSub.text = "Remino v$installed"
-        }
-    }
-
-    private fun maybeAutoCheckUpdates() {
-        if (!::updateTitle.isInitialized) return
-        if (checkingUpdate || downloadingUpdate) return
-        val last = options.lastUpdateCheck
-        val week = 7L * 24 * 60 * 60 * 1000
-        if (last == 0L) {
-            // Check once after a fresh install instead of waiting a week.
-            checkForUpdates()
-            return
-        }
-        if (System.currentTimeMillis() - last > week) {
-            checkForUpdates()
-        }
     }
 
     // ------------------------------------------------------------- activity
@@ -1846,6 +1603,9 @@ class SettingsActivity : Activity() {
         const val REQ_EXPORT = 1
         const val REQ_IMPORT = 2
         const val KEY_PAGE = "settings_page"
+
+        /** Cloudflare-hosted download page for the latest Remino APK. */
+        const val UPDATE_URL = "https://remino.pages.dev"
     }
 }
 
@@ -1880,101 +1640,6 @@ private class SparkBars(context: Context) : View(context) {
             rect.set(x, base - h, x + barW, base)
             paint.color = if (i == values.lastIndex) highlight else color
             canvas.drawRoundRect(rect, dp(3f), dp(3f), paint)
-        }
-    }
-}
-
-/** Material-style wavy circle used by the update row. */
-private class WavyCircle(context: Context) : View(context) {
-    var accent: Int = 0
-    var track: Int = 0
-
-    /** 0..1 draws a progress ring; negative shows the idle / spinning state. */
-    var progress: Float = -1f
-        set(value) {
-            field = value
-            invalidate()
-        }
-
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-        strokeWidth = resources.displayMetrics.density * 2.4f
-    }
-    private var phase = 0f
-    private var animator: ValueAnimator? = null
-
-    /** Draws a tick instead of the ring for a moment after a successful check. */
-    var done = false
-        set(value) {
-            field = value
-            invalidate()
-        }
-
-    fun showDone() {
-        done = true
-        postDelayed({ done = false }, 1600L)
-    }
-
-    fun start() {
-        if (animator != null) return
-        done = false
-        animator = ValueAnimator.ofFloat(0f, (2 * Math.PI).toFloat()).apply {
-            duration = 1100L
-            repeatCount = ValueAnimator.INFINITE
-            addUpdateListener {
-                phase = it.animatedValue as Float
-                invalidate()
-            }
-            start()
-        }
-    }
-
-    fun stop() {
-        animator?.cancel()
-        animator = null
-        phase = 0f
-        invalidate()
-    }
-
-    override fun onDraw(canvas: Canvas) {
-        val cx = width / 2f
-        val cy = height / 2f
-        val r = minOf(cx, cy) - paint.strokeWidth
-        paint.color = track
-        canvas.drawCircle(cx, cy, r, paint)
-
-        if (progress >= 0f) {
-            paint.color = accent
-            canvas.drawArc(
-                cx - r, cy - r, cx + r, cy + r,
-                -90f, 360f * progress.coerceIn(0f, 1f), false, paint,
-            )
-            return
-        }
-
-        if (animator == null) {
-            paint.color = accent
-            canvas.drawCircle(cx, cy, r, paint)
-            // small tick so the idle state reads as "ready to check"
-            paint.style = Paint.Style.FILL
-            canvas.drawCircle(cx, cy, r * 0.18f, paint)
-            paint.style = Paint.Style.STROKE
-            return
-        }
-
-        paint.color = accent
-        val steps = 48
-        var lastX = 0f
-        var lastY = 0f
-        for (i in 0..steps) {
-            val a = (i.toFloat() / steps) * (2 * Math.PI).toFloat()
-            val wave = r + kotlin.math.sin(a * 6f + phase) * (r * 0.07f)
-            val x = cx + kotlin.math.cos(a) * wave
-            val y = cy + kotlin.math.sin(a) * wave
-            if (i > 0) canvas.drawLine(lastX, lastY, x, y, paint)
-            lastX = x
-            lastY = y
         }
     }
 }

@@ -1,10 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Used only by the weekly / on-demand GitHub release check and update download. -->
-    <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Lets Remino hand a verified update APK to the Android package installer. -->
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Optional: lets the mascot sit exactly on the cursor, and floating mode. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- Voice typing; audio is handled by Android's on-device recognizer. -->
@@ -54,11 +50,6 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
-
-        <!-- Receives the PackageInstaller status for an in-app update. -->
-        <receiver
-            android:name=".UpdateInstallReceiver"
-            android:exported="false" />
 
         <service
             android:name=".KeyboardService"

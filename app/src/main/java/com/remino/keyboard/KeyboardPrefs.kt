@@ -216,11 +216,6 @@ class KeyboardPrefs(context: Context) {
     fun isSensitivePackage(packageName: String?): Boolean =
         perAppSensitive && packageName != null && packageName in sensitivePackages()
 
-    // ---- updates ----
-    var lastUpdateCheck: Long
-        get() = prefs.getLong(KEY_LAST_UPDATE_CHECK, 0L)
-        set(value) { prefs.edit().putLong(KEY_LAST_UPDATE_CHECK, value).apply() }
-
     // ---- backup ----
 
     fun exportData(): JSONObject = JSONObject()
@@ -370,6 +365,5 @@ class KeyboardPrefs(context: Context) {
         const val KEY_CLIP_IMAGES = "clip_images"
         const val KEY_PER_APP_SENSITIVE = "per_app_sensitive"
         const val KEY_SENSITIVE_PACKAGES = "sensitive_packages"
-        const val KEY_LAST_UPDATE_CHECK = "last_update_check"
-    }
+        }
 }
