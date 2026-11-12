@@ -591,7 +591,7 @@ class SettingsActivity : Activity() {
         suggestions.addView(
             switchRow(
                 "Suggestion card",
-                "A rounded card with Reo, the word lane and an options curtain",
+                "A floating card above the keys with Reo and the options curtain",
                 options.suggestionDock,
             ) { options.suggestionDock = it },
         )
