@@ -18,7 +18,7 @@ fun semverCode(name: String): Int {
 val appVersionName = System.getenv("VERSION_NAME")
     ?.removePrefix("v")
     ?.takeIf { it.isNotBlank() }
-    ?: "0.8.1"
+    ?: "0.8.2"
 val appVersionCode = System.getenv("VERSION_CODE")?.toIntOrNull()
     ?: maxOf(semverCode(appVersionName), 5)
 

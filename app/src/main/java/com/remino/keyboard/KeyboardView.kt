@@ -823,16 +823,17 @@ class KeyboardView(context: Context) : View(context) {
         return RectF(left, card.top, width.toFloat(), height.toFloat())
     }
 
-    private val dockHeaderH: Float get() = dp(62f)
+    private val dockHeaderH: Float get() = dp(54f)
 
+    /** Reo shrinks into a compact header badge once an options panel is open. */
     private fun dockHeaderReoRect(): RectF {
         val area = dockCurtainRect()
-        val side = dp(44f)
+        val side = dp(32f)
         return RectF(
-            area.left + dp(10f),
-            area.top + dp(10f),
-            area.left + dp(10f) + side,
-            area.top + dp(10f) + side,
+            area.left + dp(12f),
+            area.top + dp(11f),
+            area.left + dp(12f) + side,
+            area.top + dp(11f) + side,
         )
     }
 
@@ -848,11 +849,11 @@ class KeyboardView(context: Context) : View(context) {
     private fun dockCurtainTileRects(): List<RectF> {
         val area = dockCurtainRect()
         val padX = dp(12f)
-        val gap = dp(8f)
+        val gap = dp(9f)
         val cols = 4
         val rows = 3
-        val gridTop = area.top + dockHeaderH
-        val gridBottom = area.bottom - dp(18f)
+        val gridTop = area.top + dockHeaderH + dp(9f)
+        val gridBottom = area.bottom - dp(16f)
         val tileW = (area.width() - padX * 2f - gap * (cols - 1)) / cols
         val tileH = (gridBottom - gridTop - gap * (rows - 1)) / rows
         if (tileW <= dp(20f) || tileH <= dp(20f)) return emptyList()
@@ -876,9 +877,10 @@ class KeyboardView(context: Context) : View(context) {
 
     private fun addDockMascotTarget(open: Boolean) {
         val r = if (open) dockHeaderReoRect() else dockMascotRect()
+        val pad = if (open) dp(6f) else dp(4f)
         targets.add(
             Target(
-                RectF(r.left - dp(4f), r.top - dp(4f), r.right + dp(4f), r.bottom + dp(4f)),
+                RectF(r.left - pad, r.top - pad, r.right + pad, r.bottom + pad),
                 action = when {
                     !open -> ToolbarAction.MENU
                     trayOpen -> ToolbarAction.CLOSE
@@ -1559,11 +1561,8 @@ class KeyboardView(context: Context) : View(context) {
         val left = dp(56f)
         val right = w - dp(56f)
         tmpRect.set(left, cy - dp(17f), right, cy + dp(17f))
-        fill.color = ColorUtils.blendARGB(t.key, t.accent, 0.14f)
+        fill.color = t.key
         canvas.drawRoundRect(tmpRect, dp(17f), dp(17f), fill)
-        strokePaint.color = ColorUtils.setAlphaComponent(t.accent, 150)
-        strokePaint.strokeWidth = dp(1f)
-        canvas.drawRoundRect(tmpRect, dp(17f), dp(17f), strokePaint)
 
         val barLeft = left + dp(16f)
         drawVoiceBars(canvas, t, barLeft, cy)
@@ -1588,7 +1587,7 @@ class KeyboardView(context: Context) : View(context) {
         tmpRect.set(left, cy - dp(18f), right, cy + dp(18f))
         fill.color = t.card
         canvas.drawRoundRect(tmpRect, dp(18f), dp(18f), fill)
-        strokePaint.color = ColorUtils.setAlphaComponent(t.accent, 90)
+        strokePaint.color = ColorUtils.blendARGB(t.card, t.text, 0.08f)
         strokePaint.strokeWidth = dp(1f)
         canvas.drawRoundRect(tmpRect, dp(18f), dp(18f), strokePaint)
 
@@ -1651,20 +1650,11 @@ class KeyboardView(context: Context) : View(context) {
 
     private fun drawDockCard(canvas: Canvas, t: KeyboardTheme) {
         val card = dockCardRect()
-        val rr = min(dp(t.toolbarRadiusDp + 6f), card.height() / 2f)
+        val rr = min(dp(t.toolbarRadiusDp), card.height() / 2f)
         fill.shader = null
-        // A soft shadow lifts the card off the app behind it.
-        fill.color = ColorUtils.setAlphaComponent(Color.BLACK, 70)
-        tmpRectThumb.set(card)
-        tmpRectThumb.offset(0f, dp(3f))
-        canvas.drawRoundRect(tmpRectThumb, rr, rr, fill)
-        fill.color = t.card
+        // One flat surface with the keyboard shell: no drop shadow, no halo.
+        fill.color = t.base
         canvas.drawRoundRect(card, rr, rr, fill)
-        strokePaint.color = ColorUtils.blendARGB(t.card, t.text, 0.07f)
-        strokePaint.strokeWidth = dp(1f)
-        val inset = RectF(card)
-        inset.inset(dp(0.5f), dp(0.5f))
-        canvas.drawRoundRect(inset, rr, rr, strokePaint)
 
         if (mascotEnabled) {
             drawDockMascot(canvas, t, dockMascotRect(), trayOpen)
@@ -1794,11 +1784,8 @@ class KeyboardView(context: Context) : View(context) {
                 val pill = RectF(lane)
                 pill.inset(dp(2f), dp(4f))
                 fill.shader = null
-                fill.color = ColorUtils.blendARGB(t.card, t.accent, 0.12f)
+                fill.color = t.key
                 canvas.drawRoundRect(pill, pill.height() / 2f, pill.height() / 2f, fill)
-                strokePaint.color = ColorUtils.setAlphaComponent(t.accent, 90)
-                strokePaint.strokeWidth = dp(1f)
-                canvas.drawRoundRect(pill, pill.height() / 2f, pill.height() / 2f, strokePaint)
 
                 drawVoiceBars(canvas, t, pill.left + dp(12f), pill.centerY())
                 textPaint.textSize = sp(12.5f)
@@ -1831,7 +1818,7 @@ class KeyboardView(context: Context) : View(context) {
             }
             copiedChip != null -> {
                 val pill = RectF(lane)
-                fill.color = ColorUtils.blendARGB(t.card, t.accent, 0.10f)
+                fill.color = t.key
                 canvas.drawRoundRect(pill, dp(14f), dp(14f), fill)
                 drawIcon(canvas, R.drawable.ic_clipboard, pill.left + dp(16f), pill.centerY(), dp(17f), t.accent)
                 textPaint.textSize = sp(12f)
@@ -1923,13 +1910,13 @@ class KeyboardView(context: Context) : View(context) {
             dockProgress = 1f
         }
 
-        val rr = min(dp(t.toolbarRadiusDp + 6f), area.width() / 2f)
+        val rr = min(dp(t.toolbarRadiusDp), area.width() / 2f)
         val visibleBottom = area.top + area.height() * dockProgress
         canvas.save()
         canvas.clipRect(area.left, area.top, area.right, visibleBottom)
 
         fill.shader = null
-        fill.color = t.card
+        fill.color = t.base
         path.reset()
         path.addRoundRect(
             area,
@@ -1937,9 +1924,6 @@ class KeyboardView(context: Context) : View(context) {
             Path.Direction.CW,
         )
         canvas.drawPath(path, fill)
-        strokePaint.color = ColorUtils.blendARGB(t.card, t.text, 0.06f)
-        strokePaint.strokeWidth = dp(1f)
-        canvas.drawPath(path, strokePaint)
 
         drawDockHeader(canvas, t)
         if (trayOpen) {
@@ -1950,24 +1934,27 @@ class KeyboardView(context: Context) : View(context) {
                 val r = rects[i]
                 val pressed = targets.any { it.tray && it.action == tile.action && isPressed(it) }
                 fill.color = if (pressed) {
-                    ColorUtils.blendARGB(t.card, t.text, 0.14f)
+                    ColorUtils.blendARGB(t.base, t.accent, 0.20f)
                 } else {
-                    ColorUtils.blendARGB(t.card, t.text, 0.05f)
+                    ColorUtils.blendARGB(t.base, t.key, 0.72f)
                 }
-                val tr = min(dp(16f), r.width() * 0.28f)
+                val tr = dp(t.keyRadiusDp)
                 canvas.drawRoundRect(r, tr, tr, fill)
 
-                val iconSide = min(r.width(), r.height()) * 0.30f
-                val iconCy = r.top + r.height() * 0.40f
-                drawIcon(canvas, tile.icon, r.centerX(), iconCy, iconSide, t.icon)
+                val iconSide = min(r.width(), r.height()) * 0.31f
+                val iconCy = r.top + r.height() * 0.41f
+                drawIcon(
+                    canvas, tile.icon, r.centerX(), iconCy, iconSide,
+                    if (pressed) t.text else t.icon,
+                )
                 textPaint.textAlign = Paint.Align.CENTER
-                textPaint.textSize = sp(9.5f)
-                textPaint.color = t.textDim
+                textPaint.textSize = sp(10f)
+                textPaint.color = if (pressed) t.text else t.textDim
                 textPaint.typeface = Typeface.DEFAULT
                 val label = TextUtils.ellipsize(
-                    tile.label, textPaint, r.width() - dp(6f), TextUtils.TruncateAt.END,
+                    tile.label, textPaint, r.width() - dp(8f), TextUtils.TruncateAt.END,
                 )
-                canvas.drawText(label, 0, label.length, r.centerX(), r.top + r.height() * 0.80f, textPaint)
+                canvas.drawText(label, 0, label.length, r.centerX(), r.top + r.height() * 0.82f, textPaint)
             }
         }
         canvas.restore()
@@ -1976,17 +1963,18 @@ class KeyboardView(context: Context) : View(context) {
 
     /** Reo + a title, used by both the options grid and the docked panels. */
     private fun drawDockHeader(canvas: Canvas, t: KeyboardTheme) {
+        val area = dockCurtainRect()
         val reo = dockHeaderReoRect()
         if (mascotEnabled) {
             drawDockMascot(canvas, t, reo, trayOpen)
         } else {
-            drawIcon(canvas, R.drawable.ic_grid, reo.centerX(), reo.centerY(), dp(22f), t.icon)
+            drawIcon(canvas, R.drawable.ic_grid, reo.centerX(), reo.centerY(), dp(20f), t.icon)
         }
 
         val title = when {
-            trayOpen -> "OPTIONS"
-            panel == Panel.EMOJI -> "EMOJI"
-            panel == Panel.CLIPBOARD -> "CLIPBOARD"
+            trayOpen -> "Options"
+            panel == Panel.EMOJI -> "Emoji"
+            panel == Panel.CLIPBOARD -> "Clipboard"
             else -> ""
         }
         val subtitle = when {
@@ -1995,28 +1983,27 @@ class KeyboardView(context: Context) : View(context) {
             panel == Panel.CLIPBOARD -> "Recent clips"
             else -> ""
         }
+        val textLeft = reo.right + dp(11f)
+        val textRight = if (panel == Panel.CLIPBOARD) width - dp(96f) else width - dp(14f)
+        val maxW = (textRight - textLeft).coerceAtLeast(dp(40f))
         textPaint.textAlign = Paint.Align.LEFT
         textPaint.typeface = Typeface.DEFAULT
-        val textLeft = reo.right + dp(13f)
-        textPaint.textSize = sp(9.5f)
-        textPaint.color = t.textDim
-        val labelY = reo.centerY() - dp(7f)
-        canvas.drawText(title, textLeft, labelY, textPaint)
-        textPaint.textSize = sp(14f)
-        textPaint.color = t.text
-        val subY = reo.centerY() + dp(10f)
-        canvas.drawText(subtitle, textLeft, subY, textPaint)
 
-        textPaint.textAlign = Paint.Align.RIGHT
-        textPaint.textSize = sp(9.5f)
+        textPaint.textSize = sp(15f)
+        textPaint.color = t.text
+        val titleText = TextUtils.ellipsize(title, textPaint, maxW, TextUtils.TruncateAt.END)
+        canvas.drawText(titleText, 0, titleText.length, textLeft, reo.centerY(), textPaint)
+
+        textPaint.textSize = sp(10f)
         textPaint.color = t.textDim
-        val hint = if (trayOpen) "tap Reo\nto close" else "tap Reo\nto go back"
-        val lines = hint.split("\n")
-        val hintRight = width - dp(14f)
-        val hintY = reo.centerY() - dp(6f)
-        lines.forEachIndexed { i, line ->
-            canvas.drawText(line, hintRight, hintY + i * sp(12f), textPaint)
-        }
+        val subText = TextUtils.ellipsize(subtitle, textPaint, maxW, TextUtils.TruncateAt.END)
+        canvas.drawText(subText, 0, subText.length, textLeft, reo.centerY() + sp(13f), textPaint)
+
+        // A single hairline separates the header from the content.
+        strokePaint.color = ColorUtils.blendARGB(t.base, t.text, 0.08f)
+        strokePaint.strokeWidth = dp(1f)
+        val dividerY = area.top + dockHeaderH - dp(0.5f)
+        canvas.drawLine(area.left + dp(12f), dividerY, width - dp(12f), dividerY, strokePaint)
         textPaint.textAlign = Paint.Align.CENTER
     }
 
