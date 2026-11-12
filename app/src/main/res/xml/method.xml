@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <input-method xmlns:android="http://schemas.android.com/apk/res/android"
-    android:settingsActivity="com.example.keyboard.SettingsActivity">
+    android:settingsActivity="com.remino.keyboard.SettingsActivity">
     <subtype
         android:imeSubtypeLocale="en_US"
         android:imeSubtypeMode="keyboard"

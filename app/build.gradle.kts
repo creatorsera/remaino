@@ -18,16 +18,16 @@ fun semverCode(name: String): Int {
 val appVersionName = System.getenv("VERSION_NAME")
     ?.removePrefix("v")
     ?.takeIf { it.isNotBlank() }
-    ?: "0.7.7"
+    ?: "0.8.0"
 val appVersionCode = System.getenv("VERSION_CODE")?.toIntOrNull()
     ?: maxOf(semverCode(appVersionName), 5)
 
 android {
-    namespace = "com.example.keyboard"
+    namespace = "com.remino.keyboard"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.example.keyboard"
+        applicationId = "com.remino.keyboard"
         minSdk = 26
         targetSdk = 36
         versionCode = appVersionCode
