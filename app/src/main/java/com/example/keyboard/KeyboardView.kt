@@ -1435,35 +1435,30 @@ class KeyboardView(context: Context) : View(context) {
         textPaint.textAlign = Paint.Align.CENTER
     }
 
-    /** Animated listening pill: three bars + pulsing mic, so voice mode is obvious. */
+    /** Animated listening pill: waveform bars + a clear stop control. */
     private fun drawListeningPill(canvas: Canvas, t: KeyboardTheme, w: Float) {
         val cy = toolbarCenterY()
         val left = dp(56f)
         val right = w - dp(56f)
-        tmpRect.set(left, cy - dp(16f), right, cy + dp(16f))
+        tmpRect.set(left, cy - dp(17f), right, cy + dp(17f))
         fill.color = ColorUtils.blendARGB(t.key, t.accent, 0.14f)
-        canvas.drawRoundRect(tmpRect, dp(16f), dp(16f), fill)
+        canvas.drawRoundRect(tmpRect, dp(17f), dp(17f), fill)
         strokePaint.color = ColorUtils.setAlphaComponent(t.accent, 150)
         strokePaint.strokeWidth = dp(1f)
-        canvas.drawRoundRect(tmpRect, dp(16f), dp(16f), strokePaint)
+        canvas.drawRoundRect(tmpRect, dp(17f), dp(17f), strokePaint)
 
-        val now = SystemClock.uptimeMillis()
-        val baseX = left + dp(28f)
-        for (i in 0 until 4) {
-            val phase = sin((now / 120.0) + i * 1.1).toFloat()
-            val h = dp(4f) + abs(phase) * dp(9f)
-            fill.color = t.accent
-            tmpRect.set(baseX + i * dp(7f), cy - h / 2f, baseX + i * dp(7f) + dp(3f), cy + h / 2f)
-            canvas.drawRoundRect(tmpRect, dp(2f), dp(2f), fill)
-        }
+        val barLeft = left + dp(16f)
+        drawVoiceBars(canvas, t, barLeft, cy)
         textPaint.textAlign = Paint.Align.LEFT
         textPaint.textSize = sp(13f)
         textPaint.color = t.text
-        canvas.drawText("Listening…", left + dp(62f), cy - (textPaint.descent() + textPaint.ascent()) / 2f, textPaint)
+        val y = cy - (textPaint.descent() + textPaint.ascent()) / 2f
+        canvas.drawText("Listening…", barLeft + dp(34f), y, textPaint)
         textPaint.textAlign = Paint.Align.RIGHT
         textPaint.textSize = sp(11f)
         textPaint.color = t.textDim
-        canvas.drawText("tap to stop", right - dp(12f), cy - (textPaint.descent() + textPaint.ascent()) / 2f, textPaint)
+        canvas.drawText("tap to stop", right - dp(30f), y, textPaint)
+        drawStopGlyph(canvas, t, right - dp(14f), cy, dp(8f))
         textPaint.textAlign = Paint.Align.CENTER
         postInvalidateOnAnimation()
     }
@@ -1554,14 +1549,18 @@ class KeyboardView(context: Context) : View(context) {
         val chevCx = dockChevronCx()
         val accent = ColorUtils.blendARGB(t.accent, t.text, 0.35f)
         drawDockChevron(canvas, chevCx, card.centerY(), trayOpen, accent)
-        drawIcon(
-            canvas,
-            R.drawable.ic_mic,
-            dockMicCx(),
-            card.centerY(),
-            dp(20f),
-            if (listening) t.accent else t.icon,
-        )
+        if (listening) {
+            drawStopGlyph(canvas, t, dockMicCx(), card.centerY(), dp(14f))
+        } else {
+            drawIcon(
+                canvas,
+                R.drawable.ic_mic,
+                dockMicCx(),
+                card.centerY(),
+                dp(20f),
+                t.icon,
+            )
+        }
     }
 
     /** A lit, shaded token so Reo reads as a physical object rather than a flat square. */
@@ -1620,13 +1619,36 @@ class KeyboardView(context: Context) : View(context) {
         if (lane.width() <= dp(20f)) return
         textPaint.textAlign = Paint.Align.LEFT
         textPaint.typeface = Typeface.DEFAULT
-        val baseY = lane.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f
+        fun baseline(): Float =
+            lane.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f
 
         when {
             listening -> {
-                textPaint.textSize = sp(14f)
-                textPaint.color = t.accent
-                canvas.drawText("Listening…", lane.left + dp(12f), baseY, textPaint)
+                val pill = RectF(lane)
+                pill.inset(dp(2f), dp(4f))
+                fill.shader = null
+                fill.color = ColorUtils.blendARGB(t.card, t.accent, 0.12f)
+                canvas.drawRoundRect(pill, pill.height() / 2f, pill.height() / 2f, fill)
+                strokePaint.color = ColorUtils.setAlphaComponent(t.accent, 90)
+                strokePaint.strokeWidth = dp(1f)
+                canvas.drawRoundRect(pill, pill.height() / 2f, pill.height() / 2f, strokePaint)
+
+                drawVoiceBars(canvas, t, pill.left + dp(12f), pill.centerY())
+                textPaint.textSize = sp(12.5f)
+                textPaint.color = t.text
+                val textLeft = pill.left + dp(44f)
+                val stopW = dp(66f)
+                val avail = (pill.right - textLeft - stopW).coerceAtLeast(dp(20f))
+                val label = TextUtils.ellipsize("Listening…", textPaint, avail, TextUtils.TruncateAt.END)
+                canvas.drawText(label, 0, label.length, textLeft, baseline(), textPaint)
+                if (pill.width() > dp(190f)) {
+                    textPaint.textAlign = Paint.Align.RIGHT
+                    textPaint.textSize = sp(9.5f)
+                    textPaint.color = t.textDim
+                    canvas.drawText("tap to stop", pill.right - dp(10f), baseline(), textPaint)
+                    textPaint.textAlign = Paint.Align.LEFT
+                }
+                postInvalidateOnAnimation()
             }
             bulkUndo || bulkRedo -> {
                 drawIcon(
@@ -1637,7 +1659,7 @@ class KeyboardView(context: Context) : View(context) {
                 textPaint.color = t.text
                 canvas.drawText(
                     if (bulkRedo) "Redo delete" else "Undo delete",
-                    lane.left + dp(32f), baseY, textPaint,
+                    lane.left + dp(32f), baseline(), textPaint,
                 )
             }
             copiedChip != null -> {
@@ -1650,17 +1672,17 @@ class KeyboardView(context: Context) : View(context) {
                 val labelLeft = pill.left + dp(30f)
                 val maxW = (pill.right - pill.left - dp(40f)).coerceAtLeast(dp(20f))
                 val snippet = TextUtils.ellipsize(copiedChip ?: "", textPaint, maxW, TextUtils.TruncateAt.END)
-                canvas.drawText("Paste  ", labelLeft, baseY, textPaint)
+                canvas.drawText("Paste  ", labelLeft, baseline(), textPaint)
                 textPaint.color = t.textDim
                 val shift = textPaint.measureText("Paste  ")
-                canvas.drawText(snippet, 0, snippet.length, labelLeft + shift, baseY, textPaint)
+                canvas.drawText(snippet, 0, snippet.length, labelLeft + shift, baseline(), textPaint)
             }
             else -> {
                 val words = suggestions.take(3)
                 if (words.isEmpty()) {
                     textPaint.textSize = sp(12f)
                     textPaint.color = t.textDim
-                    canvas.drawText("start typing…", lane.left + dp(12f), baseY, textPaint)
+                    canvas.drawText("start typing…", lane.left + dp(12f), baseline(), textPaint)
                 } else {
                     val cellW = lane.width() / 3f
                     textPaint.textSize = sp(16f)
@@ -1683,13 +1705,38 @@ class KeyboardView(context: Context) : View(context) {
                             textPaint.textSize = size
                         }
                         val shown = TextUtils.ellipsize(word, textPaint, maxW, TextUtils.TruncateAt.END)
-                        canvas.drawText(shown, 0, shown.length, cellLeft + dp(10f), baseY, textPaint)
+                        canvas.drawText(shown, 0, shown.length, cellLeft + dp(10f), baseline(), textPaint)
                     }
                     textPaint.typeface = Typeface.DEFAULT
                 }
             }
         }
         textPaint.textAlign = Paint.Align.CENTER
+    }
+
+    /** Four little equalizer bars used by both listening states. */
+    private fun drawVoiceBars(canvas: Canvas, t: KeyboardTheme, left: Float, cy: Float) {
+        val now = SystemClock.uptimeMillis()
+        for (i in 0 until 4) {
+            val phase = sin(now / 120.0 + i * 1.1).toFloat()
+            val h = dp(4f) + abs(phase) * dp(9f)
+            fill.color = t.accent
+            tmpRect.set(
+                left + i * dp(6f), cy - h / 2f,
+                left + i * dp(6f) + dp(2.5f), cy + h / 2f,
+            )
+            canvas.drawRoundRect(tmpRect, dp(1.5f), dp(1.5f), fill)
+        }
+    }
+
+    /** Accent circle with a dark stop square: the tap-to-stop control. */
+    private fun drawStopGlyph(canvas: Canvas, t: KeyboardTheme, cx: Float, cy: Float, r: Float) {
+        fill.color = t.accent
+        canvas.drawCircle(cx, cy, r, fill)
+        val half = r * 0.34f
+        fill.color = t.onAccent
+        tmpRect.set(cx - half, cy - half, cx + half, cy + half)
+        canvas.drawRoundRect(tmpRect, dp(1.5f), dp(1.5f), fill)
     }
 
     private fun drawDockChevron(canvas: Canvas, cx: Float, cy: Float, down: Boolean, color: Int) {

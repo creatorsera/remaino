@@ -2,6 +2,26 @@ plugins {
     id("com.android.application")
 }
 
+/**
+ * versionName is the source of truth. 0.7.7 -> 707, 1.2.3 -> 10203.
+ * This keeps every local and CI build strictly increasing, so the in-app
+ * updater accepts the next release without relying on CI run numbers.
+ */
+fun semverCode(name: String): Int {
+    val parts = name.removePrefix("v").split(".")
+    val major = parts.getOrNull(0)?.toIntOrNull() ?: 0
+    val minor = parts.getOrNull(1)?.toIntOrNull() ?: 0
+    val patch = parts.getOrNull(2)?.toIntOrNull() ?: 0
+    return (major * 10000 + minor * 100 + patch).coerceAtLeast(1)
+}
+
+val appVersionName = System.getenv("VERSION_NAME")
+    ?.removePrefix("v")
+    ?.takeIf { it.isNotBlank() }
+    ?: "0.7.0"
+val appVersionCode = System.getenv("VERSION_CODE")?.toIntOrNull()
+    ?: maxOf(semverCode(appVersionName), 5)
+
 android {
     namespace = "com.example.keyboard"
     compileSdk = 36
@@ -10,9 +30,8 @@ android {
         applicationId = "com.example.keyboard"
         minSdk = 26
         targetSdk = 36
-        // CI run number keeps versionCode rising so every new build can update the last one
-        versionCode = maxOf(System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0, 5)
-        versionName = System.getenv("VERSION_NAME")?.removePrefix("v")?.takeIf { it.isNotBlank() } ?: "0.7.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
     }
 
     // Release signing is only configured when the CI release job provides a keystore.
