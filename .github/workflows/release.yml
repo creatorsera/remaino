@@ -43,8 +43,38 @@ jobs:
       - name: Decode signing keystore
         if: ${{ env.KEYSTORE_BASE64 != '' }}
         run: |
-          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          printf '%s' "$KEYSTORE_BASE64" \
+            | sed 's/^data:[^,]*,//' \
+            | tr -d '[:space:]' \
+            | base64 -d > "$RUNNER_TEMP/release.jks"
+          if [ ! -s "$RUNNER_TEMP/release.jks" ]; then
+            echo "::error::KEYSTORE_BASE64 did not decode to a file. Re-copy it as one unbroken base64 line."
+            exit 1
+          fi
           echo "KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+
+      - name: Validate signing keystore
+        if: ${{ env.KEYSTORE_BASE64 != '' }}
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          missing=""
+          [ -z "$KEYSTORE_PASSWORD" ] && missing="$missing KEYSTORE_PASSWORD"
+          [ -z "$KEY_ALIAS" ] && missing="$missing KEY_ALIAS"
+          [ -z "$KEY_PASSWORD" ] && missing="$missing KEY_PASSWORD"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing keystore secrets:$missing"
+            exit 1
+          fi
+          if ! keytool -list -keystore "$KEYSTORE_PATH" \
+              -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null 2>&1; then
+            echo "::error::The decoded KEYSTORE_BASE64 is not a valid keystore, or KEYSTORE_PASSWORD/KEY_ALIAS do not match it."
+            echo "Re-encode the file with: base64 -w0 your-release.jks"
+            exit 1
+          fi
+          echo "Keystore OK: alias '$KEY_ALIAS' is readable."
 
       - name: Test and build signed release APK
         env:
