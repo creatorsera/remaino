@@ -1,4 +1,41 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="ic_launcher_background">#000000</color>
+
+    <!-- Semantic colours used by the XML chrome. values-night overrides these. -->
+    <color name="kb_panel">#E6E1D6</color>
+    <color name="kb_key">#FAF7F0</color>
+    <color name="kb_special_key">#F1ECE1</color>
+    <color name="kb_bar">#EFEAE0</color>
+    <color name="kb_text">#1B1B1E</color>
+    <color name="kb_text_dim">#6B675E</color>
+    <color name="kb_icon">#2E2E34</color>
+    <color name="kb_divider">#D9D2C5</color>
+    <color name="kb_key_edge">#D8D0C2</color>
+    <color name="kb_accent">#C6F24E</color>
+    <color name="kb_on_accent">#111114</color>
+    <color name="kb_key_pressed">#E9E3D6</color>
+
+    <!-- Explicit palettes for the manual Auto/Light/Dark override. -->
+    <color name="kb_light_panel">#E6E1D6</color>
+    <color name="kb_light_key">#FAF7F0</color>
+    <color name="kb_light_special_key">#F1ECE1</color>
+    <color name="kb_light_bar">#EFEAE0</color>
+    <color name="kb_light_text">#1B1B1E</color>
+    <color name="kb_light_text_dim">#6B675E</color>
+    <color name="kb_light_icon">#2E2E34</color>
+    <color name="kb_light_divider">#D9D2C5</color>
+    <color name="kb_light_key_edge">#D8D0C2</color>
+    <color name="kb_light_key_pressed">#E9E3D6</color>
+
+    <color name="kb_dark_panel">#1C1C1E</color>
+    <color name="kb_dark_key">#2C2C2E</color>
+    <color name="kb_dark_special_key">#262628</color>
+    <color name="kb_dark_bar">#232326</color>
+    <color name="kb_dark_text">#F2F2F5</color>
+    <color name="kb_dark_text_dim">#9A9AA1</color>
+    <color name="kb_dark_icon">#D9D9DE</color>
+    <color name="kb_dark_divider">#36363A</color>
+    <color name="kb_dark_key_edge">#00000000</color>
+    <color name="kb_dark_key_pressed">#3A3A3D</color>
 </resources>

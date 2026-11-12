@@ -2,4 +2,7 @@
 <resources>
     <string name="app_name">Remino</string>
     <string name="subtype_english">Remino</string>
+    <string name="key_symbols">\?123</string>
+    <string name="key_at">\@</string>
+    <string name="key_question">\?</string>
 </resources>

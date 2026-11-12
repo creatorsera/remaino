@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="kb_panel">#1C1C1E</color>
+    <color name="kb_key">#2C2C2E</color>
+    <color name="kb_special_key">#262628</color>
+    <color name="kb_bar">#232326</color>
+    <color name="kb_text">#F2F2F5</color>
+    <color name="kb_text_dim">#9A9AA1</color>
+    <color name="kb_icon">#D9D9DE</color>
+    <color name="kb_divider">#36363A</color>
+    <color name="kb_key_edge">#00000000</color>
+    <color name="kb_key_pressed">#3A3A3D</color>
+</resources>

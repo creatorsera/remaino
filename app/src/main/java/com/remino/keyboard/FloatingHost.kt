@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.PixelFormat
 import android.provider.Settings
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
@@ -27,7 +28,7 @@ class FloatingHost(private val context: Context, private val prefs: KeyboardPref
 
     fun canUse(): Boolean = Settings.canDrawOverlays(context)
 
-    fun show(keyboard: KeyboardView): Boolean {
+    fun show(view: View): Boolean {
         if (frame != null) return true
         val dm = context.resources.displayMetrics
         val w = min((dm.widthPixels * 0.94f).toInt(), (460 * dm.density).toInt())
@@ -46,9 +47,9 @@ class FloatingHost(private val context: Context, private val prefs: KeyboardPref
         lp.x = if (savedX >= 0) savedX.coerceAtMost(max(0, dm.widthPixels - w)) else (dm.widthPixels - w) / 2
         lp.y = if (savedY >= 0) savedY else (dm.heightPixels * 0.45f).toInt()
 
-        (keyboard.parent as? ViewGroup)?.removeView(keyboard)
+        (view.parent as? ViewGroup)?.removeView(view)
         val f = FrameLayout(context)
-        f.addView(keyboard, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        f.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         return try {
             windowManager.addView(f, lp)
             frame = f
@@ -80,9 +81,9 @@ class FloatingHost(private val context: Context, private val prefs: KeyboardPref
     }
 
     /** Removes the window and detaches the keyboard so it can go back into the normal keyboard window. */
-    fun hide(keyboard: KeyboardView) {
+    fun hide(view: View) {
         val f = frame ?: return
-        f.removeView(keyboard)
+        f.removeView(view)
         try {
             windowManager.removeView(f)
         } catch (e: Exception) {

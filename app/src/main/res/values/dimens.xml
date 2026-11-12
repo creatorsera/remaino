@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="kb_panel_radius">14dp</dimen>
+    <dimen name="kb_key_radius">8dp</dimen>
+    <dimen name="kb_side_padding">8dp</dimen>
+    <dimen name="kb_row_gap">6dp</dimen>
+    <dimen name="kb_key_gap">4dp</dimen>
+    <dimen name="kb_bar_height">44dp</dimen>
+    <dimen name="kb_bar_gap">6dp</dimen>
+    <dimen name="kb_bar_margin">8dp</dimen>
+    <dimen name="kb_bar_radius">22dp</dimen>
+    <dimen name="kb_mascot">34dp</dimen>
+    <dimen name="kb_mascot_margin">8dp</dimen>
+    <dimen name="kb_letter_size">20sp</dimen>
+    <dimen name="kb_symbol_size">14sp</dimen>
+    <dimen name="kb_space_size">13sp</dimen>
+    <dimen name="kb_row_height">46dp</dimen>
+    <dimen name="kb_popup_height">54dp</dimen>
+    <dimen name="kb_popup_radius">10dp</dimen>
+</resources>

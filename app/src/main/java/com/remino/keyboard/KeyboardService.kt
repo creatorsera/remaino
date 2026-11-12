@@ -67,6 +67,9 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
     private lateinit var floatingHost: FloatingHost
     private lateinit var mascotOverlay: MascotOverlay
     private var inputRoot: FrameLayout? = null
+    private var chromeRoot: FrameLayout? = null
+    private lateinit var suggestionBar: SuggestionBar
+    private lateinit var quickSettings: QuickSettingsView
     private var hasCaret = false
     private var caretScreenX = -1f
     private var caretScreenTop = Float.NaN
@@ -106,25 +109,77 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         voice.stop()
         clipManager?.removePrimaryClipChangedListener(clipListener)
         mascotOverlay.hide()
-        if (::keyboardView.isInitialized) floatingHost.hide(keyboardView)
+        if (::keyboardView.isInitialized) hideFloating()
         super.onDestroy()
     }
 
     override fun onCreateInputView(): View {
         // Transparent window so the rounded top corners show the app behind.
         window?.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-        if (!::keyboardView.isInitialized) {
-            keyboardView = KeyboardView(this).also { it.listener = this }
+        if (chromeRoot == null) {
+            val chrome = layoutInflater.inflate(R.layout.keyboard_input, null) as FrameLayout
+            keyboardView = chrome.findViewById(R.id.keyboard)
+            keyboardView.listener = this
+            suggestionBar = chrome.findViewById(R.id.suggestion_bar)
+            quickSettings = chrome.findViewById(R.id.quick_settings)
+            keyboardView.chrome = suggestionBar
+            wireChrome()
+            chromeRoot = chrome
         }
-        if (floatingHost.isShowing) floatingHost.hide(keyboardView)
-        (keyboardView.parent as? ViewGroup)?.removeView(keyboardView)
+        val chrome = chromeRoot!!
+        if (floatingHost.isShowing) floatingHost.hide(chrome)
+        (chrome.parent as? ViewGroup)?.removeView(chrome)
         val root = FrameLayout(this)
         root.addView(
-            keyboardView,
+            chrome,
             FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
         )
         inputRoot = root
         return root
+    }
+
+    private fun wireChrome() {
+        suggestionBar.listener = object : SuggestionBar.Listener {
+            override fun onSuggestion(word: String) = this@KeyboardService.onSuggestion(word)
+            override fun onSuggestionLongPress(word: String) = this@KeyboardService.onSuggestionLongPress(word)
+            override fun onMic() = startVoiceInput()
+            override fun onStatus() {
+                if (voice.isListening) voice.stop() else keyboardView.dismissCopiedChip()
+            }
+            override fun onMascot() {
+                quickSettings.bind(prefs)
+                quickSettings.setTheme(keyboardView.theme)
+                quickSettings.show()
+            }
+        }
+        quickSettings.listener = object : QuickSettingsView.Listener {
+            override fun onAppearance(mode: Appearance) {
+                prefs.appearance = mode
+                keyboardView.applySettings(prefs)
+                quickSettings.setTheme(keyboardView.theme)
+            }
+            override fun onToggle(key: String, value: Boolean) {
+                when (key) {
+                    "haptics" -> prefs.haptics = value
+                    "sound" -> prefs.sound = value
+                    "preview" -> prefs.keyPreview = value
+                    "floating" -> prefs.floatingKeyboard = value
+                }
+                keyboardView.applySettings(prefs)
+                if (key == "floating") applyHostMode()
+            }
+            override fun onAction(action: ToolbarAction) {
+                quickSettings.hide()
+                keyboardView.performToolbarAction(action)
+            }
+            override fun onClose() = quickSettings.hide()
+        }
+        suggestionBar.applyTheme(keyboardView.theme)
+    }
+
+    private fun hideFloating() {
+        val chrome = chromeRoot ?: return
+        if (floatingHost.isShowing) floatingHost.hide(chrome)
     }
 
     /**
@@ -133,16 +188,18 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
      */
     private fun applyHostMode() {
         val root = inputRoot ?: return
+        val chrome = chromeRoot ?: return
         val wantFloating = prefs.floatingKeyboard && floatingHost.canUse()
         if (wantFloating) {
             if (!floatingHost.isShowing) {
-                (keyboardView.parent as? ViewGroup)?.removeView(keyboardView)
+                (chrome.parent as? ViewGroup)?.removeView(chrome)
                 root.removeAllViews()
                 root.addView(View(this), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1))
-                if (!floatingHost.show(keyboardView)) {
+                if (!floatingHost.show(chrome)) {
+                    (chrome.parent as? ViewGroup)?.removeView(chrome)
                     root.removeAllViews()
                     root.addView(
-                        keyboardView,
+                        chrome,
                         FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
                     )
                     keyboardView.setFloating(false)
@@ -153,12 +210,12 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
             keyboardView.dragEndListener = { floatingHost.savePosition() }
             keyboardView.setFloating(true)
         } else {
-            if (floatingHost.isShowing) floatingHost.hide(keyboardView)
-            if (keyboardView.parent !== root) {
-                (keyboardView.parent as? ViewGroup)?.removeView(keyboardView)
+            if (floatingHost.isShowing) floatingHost.hide(chrome)
+            if (chrome.parent !== root) {
+                (chrome.parent as? ViewGroup)?.removeView(chrome)
                 root.removeAllViews()
                 root.addView(
-                    keyboardView,
+                    chrome,
                     FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
                 )
             }
@@ -202,6 +259,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         keyboardView.setOverlayMascot(false)
         currentInputConnection?.requestCursorUpdates(InputConnection.CURSOR_UPDATE_MONITOR)
         keyboardView.applySettings(options)
+        suggestionBar.applyMascotColor(options.mascotColor)
         updateMascotOverlay()
         keyboardView.cancelCapture()
         keyboardView.closeTray()
@@ -223,7 +281,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         mascotOverlay.hide()
         mascotVisibleNow = false
         currentInputConnection?.requestCursorUpdates(0)
-        if (::keyboardView.isInitialized && floatingHost.isShowing) floatingHost.hide(keyboardView)
+        if (::keyboardView.isInitialized) hideFloating()
         super.onFinishInputView(finishingInput)
     }
 
@@ -278,10 +336,15 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
 
     override fun onText(text: String) {
         val ic = currentInputConnection ?: return
+        keyboardView.chrome?.pokeMascot()
         val ch = text.firstOrNull() ?: return
         // Typing always hides Reo and any "paste this" pill.
         keyboardView.dismissCopiedChip()
         clearBulkUndo()
+        if (Punctuation.isTight(text)) {
+            // "how are you ?" -> "how are you?": drop the auto-space before punctuation.
+            if (ic.getTextBeforeCursor(1, 0) == " ") ic.deleteSurroundingText(1, 0)
+        }
         keyboardView.setFieldEmpty(false)
         if (useComposing && (ch.isLetter() || (ch == '\'' && composing.isNotEmpty()))) {
             composing.append(text)
@@ -334,6 +397,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
 
     override fun onBackspace() {
         val ic = currentInputConnection ?: return
+        keyboardView.chrome?.pokeMascot()
         keyboardView.dismissCopiedChip()
         clearBulkUndo()
         if (composing.isNotEmpty()) {
@@ -394,6 +458,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
 
     override fun onSpace() {
         val ic = currentInputConnection ?: return
+        keyboardView.chrome?.pokeMascot()
         clearBulkUndo()
         keyboardView.dismissCopiedChip()
         finishWord()
@@ -456,7 +521,8 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         } else {
             word
         }
-        ic.commitText("$out ", 1)
+        val suffix = if (out.isNotEmpty() && out.all { Punctuation.isTight(it) }) "" else " "
+        ic.commitText(out + suffix, 1)
         countWord(word)
         keyboardView.setFieldEmpty(false)
         refreshSuggestions()
@@ -723,8 +789,8 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
     private fun updateMascotOverlay() {
         if (!::keyboardView.isInitialized) return
         // Decide this before layout so the band is never reserved (and then removed) on CURSOR.
-        val wanted = prefs.mascot && prefs.mascotPlacement == MascotPlacement.CURSOR &&
-            mascotOverlay.canShow()
+        // Reo now lives in the XML suggestion bar; the caret overlay stays off.
+        val wanted = false
         keyboardView.setOverlayMascot(wanted)
         if (!wanted || !mascotVisibleNow || !hasCaret || caretScreenTop.isNaN()) {
             mascotOverlay.hide()

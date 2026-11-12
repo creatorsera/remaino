@@ -1,6 +1,7 @@
 package com.remino.keyboard
 
 import android.content.Context
+import android.animation.ValueAnimator
 import android.content.res.Configuration
 import android.graphics.Canvas
 import android.graphics.Color
@@ -16,6 +17,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.text.TextPaint
 import android.text.TextUtils
+import android.util.AttributeSet
 import android.util.TypedValue
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
@@ -41,7 +43,10 @@ enum class ToolbarAction {
  * The whole keyboard drawn on one canvas: a rounded top toolbar (suggestions and icons)
  * above the keys, the emoji sheet or the clipboard list. Faster than one view per key.
  */
-class KeyboardView(context: Context) : View(context) {
+class KeyboardView @JvmOverloads constructor(
+    context: Context,
+    attrs: AttributeSet? = null,
+) : View(context, attrs) {
 
     interface Listener {
         fun onText(text: String)
@@ -102,9 +107,14 @@ class KeyboardView(context: Context) : View(context) {
 
     var listener: Listener? = null
 
+    /** The XML suggestion bar / mascot above this canvas. */
+    var chrome: KeyboardChrome? = null
+
     var theme: KeyboardTheme = KeyboardTheme.Dark
         set(value) {
             field = value
+            chrome?.applyTheme(value)
+            keyPopup?.theme = value
             invalidate()
         }
 
@@ -141,6 +151,13 @@ class KeyboardView(context: Context) : View(context) {
     private var listening = false
     private val prefs = KeyboardPrefs(context)
     private var suggestions: List<String> = emptyList()
+    private var languageLabel = "English"
+    private var pressScale = 1f
+    private var pressTarget: Target? = null
+    private var pressAnimator: ValueAnimator? = null
+    private var keyPopup: KeyPopup? = null
+    private var altTarget: Target? = null
+    private var altPointer = -1
     private var composingActive = false
     private var navInset = 0
     private var lastShiftTap = 0L
@@ -246,8 +263,10 @@ class KeyboardView(context: Context) : View(context) {
     }
     private val glyphPaint = Paint()
     private val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
+    private val letterFace: Typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
     private val path = Path()
     private val tmpRect = RectF()
+    private val keyRect = RectF()
     private val tmpRectThumb = RectF()
     private val imagePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val clipStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -302,14 +321,14 @@ class KeyboardView(context: Context) : View(context) {
     private fun sp(v: Float): Float =
         TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, v, resources.displayMetrics)
 
-    private val toolbarH: Float get() = dp(48f)
-    /** Height of the floating capsule, and the air gap under it. */
-    private val dockCardH: Float get() = dp(54f)
-    private val dockGap: Float get() = dp(9f)
+    private val toolbarH: Float get() = 0f
+    /** Height of the floating pill, and the air gap under it. */
+    private val dockCardH: Float get() = dp(44f)
+    private val dockGap: Float get() = dp(6f)
     private val rowH: Float get() = dp(46f * heightScale)
-    private val rowGap: Float get() = dp(4f)
-    private val sideMargin: Float get() = dp(1.5f)
-    private val keyGap: Float get() = dp(2f)
+    private val rowGap: Float get() = dp(6f)
+    private val sideMargin: Float get() = dp(8f)
+    private val keyGap: Float get() = dp(4f)
     private val topPad: Float get() = dp(6f)
     private val bottomPad: Float
         get() = if (floating) {
@@ -323,8 +342,7 @@ class KeyboardView(context: Context) : View(context) {
      * Only "Above the keys" uses it: "At cursor" draws Reo in the caret overlay and
      * the toolbar keeps its own lane, so neither should grow the keyboard.
      */
-    private val mascotBandH: Float
-        get() = if (mascotEnabled && !suggestionDock && placement == MascotPlacement.ABOVE) dp(34f) else 0f
+    private val mascotBandH: Float get() = 0f
 
     /** The grab bar at the top of the floating keyboard. */
     private val handleH: Float get() = if (floating) dp(20f) else 0f
@@ -338,8 +356,7 @@ class KeyboardView(context: Context) : View(context) {
      * The capsule floats in its own band above the key bed; the band is transparent,
      * so the app shows through the gap and the keyboard starts below it.
      */
-    private fun keyboardTop(): Float =
-        if (dockMode()) topOffset() + dockCardH + dockGap else topOffset() + toolbarH
+    private fun keyboardTop(): Float = topOffset() + toolbarH
 
     private fun keysTop(): Float = keyboardTop() + topPad
     private fun keysHeight(): Float = rowCount() * rowH + (rowCount() - 1) * rowGap
@@ -357,6 +374,7 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     override fun onDetachedFromWindow() {
+        keyPopup?.dismissAll()
         uiHandler.removeCallbacks(repeatRunnable)
         uiHandler.removeCallbacks(longPressRunnable)
         super.onDetachedFromWindow()
@@ -391,6 +409,7 @@ class KeyboardView(context: Context) : View(context) {
         super.onConfigurationChanged(newConfig)
         // "Auto" follows the phone without waiting for the next settings change.
         if (appearance == Appearance.SYSTEM) theme = appearance.theme(systemIsDark())
+        chrome?.applyTheme(theme)
     }
 
     fun applySettings(options: KeyboardPrefs) {
@@ -406,7 +425,7 @@ class KeyboardView(context: Context) : View(context) {
         mascotColor = options.mascotColor
         mascotOffsetX = options.mascotOffsetX
         mascotOffsetY = options.mascotOffsetY
-        suggestionDock = options.suggestionDock
+        suggestionDock = false
         heightScale = options.keyboardHeightPercent / 100f
         extraBottomPad = options.keyboardPadding
         placement = options.mascotPlacement
@@ -422,6 +441,10 @@ class KeyboardView(context: Context) : View(context) {
             dockProgress = 0f
         }
         if (layoutChanged) requestLayout()
+        chrome?.applyTheme(theme)
+        keyPopup?.theme = theme
+        chrome?.setMascotVisible(true)
+        chrome?.setLanguage(languageLabel)
         rebuildTargets()
         invalidate()
     }
@@ -462,6 +485,7 @@ class KeyboardView(context: Context) : View(context) {
     fun showCopiedChip(text: String) {
         copiedChip = text.replace('\n', ' ').take(140)
         copiedAt = SystemClock.uptimeMillis()
+        chrome?.setStatus("Paste  ${copiedChip}", clickable = true)
         rebuildTargets()
         invalidate()
         uiHandler.removeCallbacks(clearChipRunnable)
@@ -472,6 +496,7 @@ class KeyboardView(context: Context) : View(context) {
     fun setListening(on: Boolean) {
         if (listening == on) return
         listening = on
+        chrome?.setListening(on)
         rebuildTargets()
         invalidate()
     }
@@ -481,6 +506,9 @@ class KeyboardView(context: Context) : View(context) {
         if (bulkUndo == undo && bulkRedo == redo) return
         bulkUndo = undo
         bulkRedo = redo
+        if (undo || redo) {
+            chrome?.setStatus(if (redo) "Redo delete" else "Undo delete", clickable = true)
+        }
         rebuildTargets()
         invalidate()
     }
@@ -495,6 +523,7 @@ class KeyboardView(context: Context) : View(context) {
 
     private val clearChipRunnable = Runnable {
         copiedChip = null
+        chrome?.setSuggestions(suggestions)
         rebuildTargets()
         invalidate()
     }
@@ -504,12 +533,27 @@ class KeyboardView(context: Context) : View(context) {
         if (copiedChip == null) return
         copiedChip = null
         uiHandler.removeCallbacks(clearChipRunnable)
+        chrome?.setSuggestions(suggestions)
         rebuildTargets()
         invalidate()
     }
 
     fun setSuggestions(list: List<String>) {
         suggestions = list
+        chrome?.setSuggestions(list)
+        invalidate()
+    }
+
+    fun setLanguageLabel(label: String) {
+        if (label.isBlank() || label == languageLabel) return
+        languageLabel = label
+        chrome?.setLanguage(label)
+        invalidate()
+    }
+
+    /** Entry point for tiles in the XML quick settings. */
+    fun performToolbarAction(action: ToolbarAction) {
+        handleAction(action)
         invalidate()
     }
 
@@ -536,6 +580,7 @@ class KeyboardView(context: Context) : View(context) {
         targets.clear()
         underPanelKeys.clear()
         copiedPillRect = null
+        chrome?.setBarVisible(panel == Panel.KEYS && captureMode == Capture.NONE && !trayOpen)
         val w = width.toFloat()
         if (w <= 0f) return
         val cy = toolbarCenterY()
@@ -660,13 +705,13 @@ class KeyboardView(context: Context) : View(context) {
                 buildEmojiTargets(w)
                 return
             }
-            addDockCardTargets(w, cy, trayOpen)
             buildKeyTargets(w)
             return
         }
 
-        targets.add(Target(leftRect, action = if (trayOpen) ToolbarAction.CLOSE else ToolbarAction.MENU))
-
+        // Normal typing is chrome-driven: the XML suggestion bar owns the
+        // capsule and its taps. The canvas only owns the keys.
+        buildKeyTargets(w)
         if (trayOpen) {
             if (trayPage >= trayPageCount) trayPage = 0
             var startX = dp(60f)
@@ -686,54 +731,6 @@ class KeyboardView(context: Context) : View(context) {
                 targets.add(Target(RectF(cx - step / 2f, topOffset(), cx + step / 2f, topOffset() + toolbarH), action = a, tray = true, trayLabel = label))
             }
             addTrayTargets()
-        } else {
-            val regionL = dp(56f)
-            val regionR = w - dp(56f)
-            if (listening) {
-                // Listening pill replaces the mic button entirely; no separate mic target here.
-                targets.add(
-                    Target(
-                        RectF(regionL, cy - dp(16f), regionR, cy + dp(16f)),
-                        action = ToolbarAction.MIC,
-                    ),
-                )
-            } else {
-                val micCx = w - dp(28f)
-                targets.add(
-                    Target(
-                        RectF(micCx - dp(22f), cy - dp(22f), micCx + dp(22f), cy + dp(22f)),
-                        action = ToolbarAction.MIC,
-                    ),
-                )
-            }
-            val gap = dp(6f)
-            if (bulkUndo || bulkRedo) {
-                val pillL = regionL + gap
-                val pillR = regionR - gap
-                targets.add(
-                    Target(
-                        RectF(pillL, cy - dp(16f), pillR, cy + dp(16f)),
-                        action = if (bulkRedo) ToolbarAction.REDO else ToolbarAction.UNDO,
-                    ),
-                )
-            } else if (copiedChip != null) {
-                val pillL = regionL + gap
-                val pillR = regionR - gap
-                val pillRect = RectF(pillL, cy - dp(18f), pillR, cy + dp(18f))
-                copiedPillRect = pillRect
-                targets.add(
-                    Target(
-                        RectF(pillRect),
-                        action = ToolbarAction.COPY_PASTE,
-                    ),
-                )
-            } else {
-                val chipW = ((regionR - gap) - (regionL + gap) - 2 * gap) / 3f
-                for (i in 0 until 3) {
-                    val l = regionL + gap + i * (chipW + gap)
-                    targets.add(Target(RectF(l, cy - dp(16f), l + chipW, cy + dp(16f)), suggestionIndex = i))
-                }
-            }
         }
 
         if (trayOpen) return
@@ -947,7 +944,7 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     private fun buildKeyTargets(w: Float, out: MutableList<Target> = targets) {
-        val rows = if (showingSymbols) Layouts.symbols(showNumberRow) else Layouts.letters(showNumberRow)
+        val rows = if (showingSymbols) Layouts.symbols(context, showNumberRow) else Layouts.letters(context, showNumberRow)
         val avail = w - 2 * sideMargin
         rows.forEachIndexed { r, row ->
             val total = row.sumOf { it.weight.toDouble() }.toFloat()
@@ -1436,7 +1433,6 @@ class KeyboardView(context: Context) : View(context) {
         val w = width.toFloat()
         val h = height.toFloat()
         val r = dp(t.toolbarRadiusDp)
-        val lane = laneVisible()
         val dock = dockMode()
         val dockExpanded = dockOpen()
 
@@ -1476,25 +1472,20 @@ class KeyboardView(context: Context) : View(context) {
             drawCopiedChip(canvas, t, w)
         }
 
-        if (dock) {
-            if (dockExpanded) {
-                // Keep the key bed visible beneath the unfolding panel so the surface
-                // reads as one continuous keyboard, not a curtain over a hole.
-                for (tg in underPanelKeys) {
-                    val key = tg.key ?: continue
-                    drawKey(canvas, tg, key, t)
-                }
-                drawDockCurtain(canvas, t)
-            } else {
-                drawDockCard(canvas, t)
+        if (dock && dockExpanded) {
+            // Keep the key bed visible beneath the unfolding panel so the surface
+            // reads as one continuous keyboard, not a curtain over a hole.
+            for (tg in underPanelKeys) {
+                val key = tg.key ?: continue
+                drawKey(canvas, tg, key, t)
             }
+            drawDockCurtain(canvas, t)
         }
 
         for (tg in targets) {
             val key = tg.key
             val action = tg.action
             when {
-                tg.suggestionIndex >= 0 -> if (!lane && !dock) drawChip(canvas, tg, t)
                 tg.resultIndex >= 0 -> drawResult(canvas, tg, t)
                 tg.tabIndex >= 0 -> drawTab(canvas, tg, t)
                 action != null -> if (action != ToolbarAction.COPY_PASTE && !tg.tray &&
@@ -1516,16 +1507,13 @@ class KeyboardView(context: Context) : View(context) {
         when (panel) {
             Panel.EMOJI -> drawEmojiSheet(canvas, t)
             Panel.CLIPBOARD -> drawClipboardList(canvas, t)
-            Panel.KEYS -> drawPreviews(canvas, t)
+            Panel.KEYS -> Unit
         }
 
         if (clipSheetVisible) drawClipSheet(canvas, t)
         if (trayOpen && !dock) drawTrayGrid(canvas, t)
 
-        if (lane) {
-            drawMascotLane(canvas, t)
-            postInvalidateOnAnimation()
-        } else if (!dock && mascotEnabled && placement == MascotPlacement.ABOVE && mascotVisible()) {
+        if (!dock && mascotEnabled && placement == MascotPlacement.ABOVE && mascotVisible()) {
             drawBandMascot(canvas, t)
             postInvalidateOnAnimation()
         }
@@ -2396,45 +2384,77 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     private fun drawKey(canvas: Canvas, tg: Target, key: Key, t: KeyboardTheme) {
-        val r = tg.rect
         val pressed = isPressed(tg)
-        val cx = r.centerX()
-        val cy = r.centerY()
+        // A barely-there press scale: the key tucks in about half a dp.
+        val inset = if (pressed) dp(0.6f) else 0f
+        keyRect.set(tg.rect)
+        keyRect.inset(inset, inset)
+        val cx = keyRect.centerX()
+        val cy = keyRect.centerY()
+        val radius = dp(t.keyRadiusDp)
+        val capsOn = key.type == KeyType.SHIFT &&
+            (shiftState == ShiftState.CAPS || shiftState == ShiftState.ONE_SHOT)
 
         if (key.type == KeyType.ENTER) {
             // The accent key, but the same corner language as every other key.
-            fill.color = if (pressed) ColorUtils.blendARGB(t.accent, Color.GRAY, 0.25f) else t.accent
-            canvas.drawRoundRect(r, dp(t.keyRadiusDp), dp(t.keyRadiusDp), fill)
-            drawIcon(canvas, R.drawable.ic_enter, cx, cy, dp(26f), t.onAccent)
+            fill.color = if (pressed) ColorUtils.blendARGB(t.accent, Color.GRAY, 0.22f) else t.accent
+            canvas.drawRoundRect(keyRect, radius, radius, fill)
+            drawIcon(canvas, R.drawable.ic_enter, cx, cy, dp(24f), t.onAccent)
             return
         }
 
-        val capsOn = key.type == KeyType.SHIFT && shiftState == ShiftState.CAPS
         val base = when {
-            capsOn -> t.inverted
-            key.type == KeyType.SHIFT && shiftState == ShiftState.ONE_SHOT -> t.key
+            key.type == KeyType.SHIFT && capsOn -> t.accent
+            key.type == KeyType.SHIFT -> t.specialKey
             key.tinted -> t.specialKey
-            key.type == KeyType.CHAR || key.type == KeyType.SPACE || key.type == KeyType.GLOBE -> t.key
-            else -> t.specialKey
+            key.type == KeyType.GLOBE -> t.specialKey
+            key.type == KeyType.SYMBOLS || key.type == KeyType.LETTERS -> t.specialKey
+            else -> t.key
         }
-        fill.color = if (pressed) ColorUtils.blendARGB(base, Color.WHITE, 0.18f) else base
-        // One radius for letters, symbols, space and controls. The old half-height
-        // radius made ?123 and ABC look like pills while the rest were rounded rects.
-        val radius = dp(t.keyRadiusDp)
-        canvas.drawRoundRect(r, radius, radius, fill)
+        fill.color = base
+        if (t.keyEdge != 0 && base != t.accent) {
+            // Light theme: a crisp 1dp edge under a slightly raised face.
+            fill.color = t.keyEdge
+            canvas.drawRoundRect(keyRect, radius, radius, fill)
+            keyRect.bottom -= dp(1f)
+            fill.color = if (pressed) t.keyPressed else base
+            canvas.drawRoundRect(keyRect, radius, radius, fill)
+        } else {
+            fill.color = if (pressed) {
+                if (base == t.accent) ColorUtils.blendARGB(base, Color.GRAY, 0.22f) else t.keyPressed
+            } else {
+                base
+            }
+            canvas.drawRoundRect(keyRect, radius, radius, fill)
+        }
 
-        val iconColor = if (capsOn) t.onInverted else t.icon
+        val iconColor = if (key.type == KeyType.SHIFT && capsOn) t.onAccent else t.icon
         when (key.type) {
-            KeyType.SHIFT -> drawIcon(canvas, R.drawable.ic_shift, cx, cy, dp(26f), iconColor)
-            KeyType.BACKSPACE -> drawIcon(canvas, R.drawable.ic_backspace, cx, cy, dp(26f), t.icon)
-            KeyType.GLOBE -> drawIcon(canvas, R.drawable.ic_globe, cx, cy, dp(24f), t.icon)
+            KeyType.SHIFT -> drawIcon(canvas, R.drawable.ic_shift, cx, cy, dp(24f), iconColor)
+            KeyType.BACKSPACE -> drawIcon(canvas, R.drawable.ic_backspace, cx, cy, dp(24f), t.icon)
+            KeyType.GLOBE -> drawIcon(canvas, R.drawable.ic_globe, cx, cy, dp(22f), t.icon)
+            KeyType.EMOJI -> drawIcon(canvas, R.drawable.ic_smile, cx, cy, dp(22f), t.icon)
             KeyType.COMMA_EMOJI -> {
                 drawIcon(canvas, R.drawable.ic_smile, cx, cy - dp(9f), dp(15f), t.icon)
                 drawLabel(canvas, ",", cx, cy + dp(7f), sp(20f), t.text)
             }
-            KeyType.CHAR -> drawLabel(canvas, labelFor(key), cx, cy, sp(22f), t.text)
-            KeyType.SYMBOLS, KeyType.LETTERS -> drawLabel(canvas, key.label, cx, cy, sp(15f), t.text)
-            KeyType.SPACE -> drawLabel(canvas, key.label, cx, cy, sp(15f), t.textDim)
+            KeyType.CHAR -> {
+                textPaint.typeface = letterFace
+                drawLabel(canvas, labelFor(key), cx, cy, sp(20f), t.text)
+                textPaint.typeface = Typeface.DEFAULT
+            }
+            KeyType.COMMA -> {
+                textPaint.typeface = letterFace
+                drawLabel(canvas, ",", cx, cy, sp(20f), t.text)
+                textPaint.typeface = Typeface.DEFAULT
+            }
+            KeyType.PERIOD -> {
+                textPaint.typeface = letterFace
+                drawLabel(canvas, ".", cx, cy, sp(20f), t.text)
+                textPaint.typeface = Typeface.DEFAULT
+            }
+            KeyType.SYMBOLS, KeyType.LETTERS -> drawLabel(canvas, key.label, cx, cy, sp(14f), t.text)
+            KeyType.SPACE -> drawLabel(canvas, languageLabel, cx, cy, sp(13f), t.textDim)
             else -> Unit
         }
     }
@@ -2524,6 +2544,17 @@ class KeyboardView(context: Context) : View(context) {
                     pressedByPointer[event.getPointerId(i)] = tg
                     Feedback.tap(this, prefs)
                     val type = tg.key?.type
+                    val longKey = tg.key
+                    if (longKey != null && (type == KeyType.CHAR || type == KeyType.COMMA ||
+                            type == KeyType.PERIOD)) {
+                        if (previewEnabled) popup().showPreview(longKey, tg.rect, labelFor(longKey))
+                        if (longKey.longPress.isNotEmpty()) {
+                            altTarget = tg
+                            altPointer = event.getPointerId(i)
+                            uiHandler.removeCallbacks(keyLongPressRunnable)
+                            uiHandler.postDelayed(keyLongPressRunnable, 380L)
+                        }
+                    }
                     if (type == KeyType.BACKSPACE) {
                         backspacePointer = event.getPointerId(i)
                         backspaceDownY = y
@@ -2573,6 +2604,21 @@ class KeyboardView(context: Context) : View(context) {
                     gripRawY = event.rawY
                     dragListener?.invoke(dx, dy)
                     return true
+                }
+                if (altTarget != null && keyPopup?.alternatesShowing == true) {
+                    val ai = event.findPointerIndex(altPointer)
+                    if (ai >= 0) keyPopup?.dragAlternates(event.getX(ai))
+                } else if (previewEnabled) {
+                    // Sliding off the key dismisses the little preview bubble.
+                    val pi = event.findPointerIndex(pressedByPointer.keys.firstOrNull() ?: -1)
+                    if (pi >= 0) {
+                        val tg = pressedByPointer.values.firstOrNull()
+                        if (tg != null) {
+                            slopRect.set(tg.rect)
+                            slopRect.inset(-dp(10f), -dp(10f))
+                            if (!slopRect.contains(event.getX(pi), event.getY(pi))) keyPopup?.hidePreview()
+                        }
+                    }
                 }
                 if (backspacePointer != -1 && !wordDeleteFired) {
                     val idx = event.findPointerIndex(backspacePointer)
@@ -2641,6 +2687,18 @@ class KeyboardView(context: Context) : View(context) {
                     return true
                 }
                 val down = pressedByPointer.remove(id)
+                if (down != null && down === altTarget && keyPopup?.alternatesShowing == true) {
+                    val chosen = keyPopup?.selectedAlternate()
+                    uiHandler.removeCallbacks(keyLongPressRunnable)
+                    keyPopup?.dismissAll()
+                    altTarget = null
+                    altPointer = -1
+                    longPressFired = null
+                    if (chosen != null) listener?.onText(chosen)
+                    invalidate()
+                    return true
+                }
+                uiHandler.removeCallbacks(keyLongPressRunnable)
                 if (down != null) {
                     val type = down.key?.type
                     if (type == KeyType.BACKSPACE) {
@@ -2659,6 +2717,9 @@ class KeyboardView(context: Context) : View(context) {
                         if (slopRect.contains(event.getX(i), event.getY(i))) activate(down)
                     }
                 }
+                keyPopup?.hidePreview()
+                altTarget = null
+                altPointer = -1
                 invalidate()
             }
             MotionEvent.ACTION_CANCEL -> {
@@ -2674,10 +2735,28 @@ class KeyboardView(context: Context) : View(context) {
                 wordDeleteFired = false
                 uiHandler.removeCallbacks(repeatRunnable)
                 uiHandler.removeCallbacks(longPressRunnable)
+                uiHandler.removeCallbacks(keyLongPressRunnable)
+                keyPopup?.dismissAll()
+                altTarget = null
+                altPointer = -1
                 invalidate()
             }
         }
         return true
+    }
+
+    private fun popup(): KeyPopup =
+        keyPopup ?: KeyPopup(this).also { it.theme = theme; keyPopup = it }
+
+    private val keyLongPressRunnable = Runnable {
+        val tg = altTarget ?: return@Runnable
+        if (!pressedByPointer.values.any { it === tg }) return@Runnable
+        val key = tg.key ?: return@Runnable
+        if (key.longPress.isEmpty()) return@Runnable
+        longPressFired = tg
+        Feedback.longPress(this, prefs)
+        popup().showAlternates(tg.rect, key.longPress, 0)
+        invalidate()
     }
 
     private fun activate(tg: Target) {
@@ -2724,7 +2803,11 @@ class KeyboardView(context: Context) : View(context) {
             KeyType.SYMBOLS -> setSymbols(true)
             KeyType.LETTERS -> setSymbols(false)
             KeyType.GLOBE -> l.onGlobe()
-            KeyType.COMMA_EMOJI -> if (captureMode != Capture.NONE) captureAppend(",") else l.onText(",")
+            KeyType.COMMA_EMOJI, KeyType.COMMA ->
+                if (captureMode != Capture.NONE) captureAppend(",") else l.onText(",")
+            KeyType.PERIOD ->
+                if (captureMode != Capture.NONE) captureAppend(".") else l.onText(".")
+            KeyType.EMOJI -> openEmoji()
             KeyType.SPACE -> if (captureMode != Capture.NONE) captureAppend(" ") else l.onSpace()
             KeyType.ENTER -> when (captureMode) {
                 Capture.NONE -> l.onEnter()

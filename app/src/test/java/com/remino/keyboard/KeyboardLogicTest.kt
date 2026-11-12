@@ -5,6 +5,10 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
 
 class SuggestionEngineTest {
     private val engine = SuggestionEngine(listOf("hello", "help", "helmet", "world"))
@@ -106,25 +110,67 @@ class StatsMathTest {
     }
 }
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
 class LayoutsTest {
+    private val context = RuntimeEnvironment.getApplication()
+
     @Test
     fun rowCountsMatchPages() {
         for (numberRow in listOf(true, false)) {
-            assertEquals(Layouts.rowCount(numberRow), Layouts.letters(numberRow).size)
-            assertEquals(Layouts.rowCount(numberRow), Layouts.symbols(numberRow).size)
+            assertEquals(Layouts.rowCount(numberRow), Layouts.letters(context, numberRow).size)
+            assertEquals(Layouts.rowCount(numberRow), Layouts.symbols(context, numberRow).size)
         }
     }
 
     @Test
     fun everyRowFillsTheWidth() {
         val pages = listOf(
-            Layouts.letters(true), Layouts.letters(false), Layouts.symbols(true), Layouts.symbols(false),
+            Layouts.letters(context, true), Layouts.letters(context, false),
+            Layouts.symbols(context, true), Layouts.symbols(context, false),
         )
         for (page in pages) {
             for (row in page) {
                 assertEquals(10.0, row.sumOf { it.weight.toDouble() }, 0.001)
             }
         }
+    }
+
+    @Test
+    fun bottomRowHasTheNewShape() {
+        val bottom = Layouts.letters(context, false).last()
+        assertEquals(
+            listOf("?123", ",", "😊", "🌐", "English", ".", "⏎"),
+            bottom.map { key ->
+                when (key.type) {
+                    KeyType.EMOJI -> "😊"
+                    KeyType.GLOBE -> "🌐"
+                    KeyType.ENTER -> "⏎"
+                    else -> key.label
+                }
+            },
+        )
+        val comma = bottom.first { it.type == KeyType.COMMA }
+        val period = bottom.first { it.type == KeyType.PERIOD }
+        assertEquals(comma.weight, period.weight, 0.001f)
+    }
+
+    @Test
+    fun accentsAreDeclaredInXml() {
+        val letters = Layouts.letters(context, false).flatten()
+        val e = letters.first { it.label == "e" }
+        assertTrue(e.longPress.contains("é"))
+        val a = letters.first { it.label == "a" }
+        assertTrue(a.longPress.contains("ä"))
+    }
+
+    @Test
+    fun punctuationHugsTheWord() {
+        assertTrue(Punctuation.isTight("?"))
+        assertTrue(Punctuation.isTight("."))
+        assertFalse(Punctuation.isTight("+"))
+        assertFalse(Punctuation.isTight("="))
+        assertFalse(Punctuation.isTight("ab"))
     }
 }
 

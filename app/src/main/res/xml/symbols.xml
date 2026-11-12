@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Keyboard xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <Row>
+        <Key app:keyLabel="1" app:keyCode="1" app:keyWeight="1" />
+        <Key app:keyLabel="2" app:keyCode="2" app:keyWeight="1" />
+        <Key app:keyLabel="3" app:keyCode="3" app:keyWeight="1" />
+        <Key app:keyLabel="4" app:keyCode="4" app:keyWeight="1" />
+        <Key app:keyLabel="5" app:keyCode="5" app:keyWeight="1" />
+        <Key app:keyLabel="6" app:keyCode="6" app:keyWeight="1" />
+        <Key app:keyLabel="7" app:keyCode="7" app:keyWeight="1" />
+        <Key app:keyLabel="8" app:keyCode="8" app:keyWeight="1" />
+        <Key app:keyLabel="9" app:keyCode="9" app:keyWeight="1" />
+        <Key app:keyLabel="0" app:keyCode="0" app:keyWeight="1" />
+    </Row>
+
+    <Row>
+        <Key app:keyLabel="@string/key_at" app:keyCode="@string/key_at" app:keyWeight="1" />
+        <Key app:keyLabel="#" app:keyCode="#" app:keyWeight="1" />
+        <Key app:keyLabel="$" app:keyCode="$" app:keyWeight="1" />
+        <Key app:keyLabel="%" app:keyCode="%" app:keyWeight="1" />
+        <Key app:keyLabel="&amp;" app:keyCode="&amp;" app:keyWeight="1" />
+        <Key app:keyLabel="-" app:keyCode="-" app:keyWeight="1" app:keyLongPress="–—" />
+        <Key app:keyLabel="+" app:keyCode="+" app:keyWeight="1" />
+        <Key app:keyLabel="(" app:keyCode="(" app:keyWeight="1" />
+        <Key app:keyLabel=")" app:keyCode=")" app:keyWeight="1" />
+        <Key app:keyLabel="/" app:keyCode="/" app:keyWeight="1" />
+    </Row>
+
+    <Row>
+        <Key app:keyType="spacer" app:keyWeight="1" />
+        <Key app:keyLabel="*" app:keyCode="*" app:keyWeight="1" />
+        <Key app:keyLabel="&quot;" app:keyCode="&quot;" app:keyWeight="1" app:keyLongPress="“”" />
+        <Key app:keyLabel="'" app:keyCode="'" app:keyWeight="1" app:keyLongPress="‘’" />
+        <Key app:keyLabel=":" app:keyCode=":" app:keyWeight="1" />
+        <Key app:keyLabel=";" app:keyCode=";" app:keyWeight="1" />
+        <Key app:keyLabel="!" app:keyCode="!" app:keyWeight="1" app:keyLongPress="¡" />
+        <Key app:keyLabel="@string/key_question" app:keyCode="@string/key_question" app:keyWeight="1" app:keyLongPress="¿" />
+        <Key app:keyLabel="_" app:keyCode="_" app:keyWeight="1" />
+        <Key app:keyType="spacer" app:keyWeight="1" />
+    </Row>
+
+    <Row app:numberRow="true">
+        <Key app:keyType="spacer" app:keyWeight="1.5" />
+        <Key app:keyLabel="=" app:keyCode="=" app:keyWeight="1" />
+        <Key app:keyLabel="[" app:keyCode="[" app:keyWeight="1" />
+        <Key app:keyLabel="]" app:keyCode="]" app:keyWeight="1" />
+        <Key app:keyLabel="{" app:keyCode="{" app:keyWeight="1" />
+        <Key app:keyLabel="}" app:keyCode="}" app:keyWeight="1" />
+        <Key app:keyLabel="&lt;" app:keyCode="&lt;" app:keyWeight="1" />
+        <Key app:keyLabel="&gt;" app:keyCode="&gt;" app:keyWeight="1" />
+        <Key app:keyType="delete" app:keyWeight="1.5" />
+    </Row>
+
+    <Row>
+        <Key app:keyLabel="ABC" app:keyType="letters" app:keyWeight="1.4" />
+        <Key app:keyLabel="," app:keyType="comma" app:keyWeight="1" />
+        <Key app:keyType="emoji" app:keyWeight="1" />
+        <Key app:keyType="globe" app:keyWeight="1" />
+        <Key app:keyType="space" app:keyLabel="English" app:keyWeight="3.1" />
+        <Key app:keyLabel="." app:keyType="period" app:keyWeight="1" />
+        <Key app:keyType="enter" app:keyWeight="1.5" />
+    </Row>
+</Keyboard>

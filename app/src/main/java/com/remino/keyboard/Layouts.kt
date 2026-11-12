@@ -1,6 +1,13 @@
 package com.remino.keyboard
 
-enum class KeyType { CHAR, SHIFT, BACKSPACE, SYMBOLS, LETTERS, GLOBE, COMMA_EMOJI, SPACE, ENTER, SPACER }
+import android.content.Context
+
+enum class KeyType {
+    CHAR, SHIFT, BACKSPACE, SYMBOLS, LETTERS, GLOBE, COMMA, PERIOD, EMOJI,
+    SPACE, ENTER, SPACER,
+    /** Kept for older saved shortcuts and tests. */
+    COMMA_EMOJI,
+}
 
 data class Key(
     val label: String,
@@ -8,55 +15,32 @@ data class Key(
     val weight: Float = 1f,
     /** Draw with the darker "special key" color instead of the letter key color. */
     val tinted: Boolean = false,
+    /** The text this key commits. Defaults to its label. */
+    val code: String = label,
+    /** Characters offered by the long-press alternates row. */
+    val longPress: List<String> = emptyList(),
 )
 
-/** Hard-coded English layouts. Later versions will load layouts from JSON files. */
+/** Loads key maps from res/xml; no layout data lives in this file anymore. */
 object Layouts {
-    private fun chars(s: String): List<Key> = s.map { Key(it.toString()) }
+    private var lettersCache: List<XmlLayoutLoader.Row>? = null
+    private var symbolsCache: List<XmlLayoutLoader.Row>? = null
 
-    private fun spacer(weight: Float) = Key("", KeyType.SPACER, weight)
+    private fun lettersRows(context: Context): List<XmlLayoutLoader.Row> =
+        lettersCache ?: XmlLayoutLoader.load(context, R.xml.qwerty).also { lettersCache = it }
 
-    private fun bottomRow(first: Key): List<Key> = listOf(
-        first,
-        Key(",", KeyType.COMMA_EMOJI, 1.1f, tinted = true),
-        Key("", KeyType.GLOBE, 1.1f),
-        Key("English", KeyType.SPACE, 3.6f),
-        Key(".", KeyType.CHAR, 1.1f, tinted = true),
-        Key("", KeyType.ENTER, 1.6f),
-    )
+    private fun symbolsRows(context: Context): List<XmlLayoutLoader.Row> =
+        symbolsCache ?: XmlLayoutLoader.load(context, R.xml.symbols).also { symbolsCache = it }
 
     fun rowCount(numberRow: Boolean): Int = if (numberRow) 5 else 4
 
-    fun letters(numberRow: Boolean): List<List<Key>> {
-        val main = listOf(
-            chars("qwertyuiop"),
-            listOf(spacer(0.5f)) + chars("asdfghjkl") + listOf(spacer(0.5f)),
-            listOf(Key("", KeyType.SHIFT, 1.5f)) + chars("zxcvbnm") + listOf(Key("", KeyType.BACKSPACE, 1.5f)),
-            bottomRow(Key("?123", KeyType.SYMBOLS, 1.5f)),
-        )
-        return if (numberRow) listOf(chars("1234567890")) + main else main
-    }
+    fun letters(context: Context, numberRow: Boolean): List<List<Key>> =
+        lettersRows(context)
+            .filter { !it.numberRowOnly || numberRow }
+            .map { it.keys }
 
-    /** The symbols page always keeps the digits, and always has the same row count as the letters page. */
-    fun symbols(numberRow: Boolean): List<List<Key>> {
-        val digits = chars("1234567890")
-        val punctuation = chars("@#\$%&-+()/")
-        val bottom = bottomRow(Key("ABC", KeyType.LETTERS, 1.5f))
-        return if (numberRow) {
-            listOf(
-                digits,
-                punctuation,
-                listOf(spacer(1f)) + chars("*\"':;!?_") + listOf(spacer(1f)),
-                listOf(spacer(1.5f)) + chars("=[]{}<>") + listOf(Key("", KeyType.BACKSPACE, 1.5f)),
-                bottom,
-            )
-        } else {
-            listOf(
-                digits,
-                punctuation,
-                listOf(spacer(1f)) + chars("*\"':;!?") + listOf(Key("", KeyType.BACKSPACE, 2f)),
-                bottom,
-            )
-        }
-    }
+    fun symbols(context: Context, numberRow: Boolean): List<List<Key>> =
+        symbolsRows(context)
+            .filter { !it.numberRowOnly || numberRow }
+            .map { it.keys }
 }

@@ -72,7 +72,7 @@ class KeyboardPrefs(context: Context) {
         set(value) { prefs.edit().putBoolean(KEY_NUMBER_ROW, value).apply() }
 
     var keyPreview: Boolean
-        get() = prefs.getBoolean(KEY_PREVIEW, false)
+        get() = prefs.getBoolean(KEY_PREVIEW, true)
         set(value) { prefs.edit().putBoolean(KEY_PREVIEW, value).apply() }
 
     /** Light, dark, or follow the phone. */

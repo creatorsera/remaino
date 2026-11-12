@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <declare-styleable name="ReminoKey">
+        <attr name="keyLabel" format="string" />
+        <attr name="keyCode" format="string" />
+        <attr name="keyWeight" format="float" />
+        <attr name="keyType" format="string" />
+        <attr name="keyLongPress" format="string" />
+        <attr name="keyTinted" format="boolean" />
+        <attr name="numberRow" format="boolean" />
+    </declare-styleable>
+</resources>

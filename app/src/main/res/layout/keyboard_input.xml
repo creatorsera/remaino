@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/chrome"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <include
+            android:id="@+id/suggestion_bar"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/kb_bar_height"
+            android:layout_marginStart="@dimen/kb_bar_margin"
+            android:layout_marginEnd="@dimen/kb_bar_margin"
+            layout="@layout/suggestion_bar" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/kb_bar_gap" />
+
+        <FrameLayout
+            android:id="@+id/keyboard_host"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <com.remino.keyboard.KeyboardView
+                android:id="@+id/keyboard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content" />
+
+            <include
+                android:id="@+id/quick_settings"
+                layout="@layout/quick_settings" />
+        </FrameLayout>
+    </LinearLayout>
+</FrameLayout>
