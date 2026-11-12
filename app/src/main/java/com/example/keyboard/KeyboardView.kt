@@ -6,7 +6,9 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.RadialGradient
 import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.os.Handler
@@ -122,6 +124,8 @@ class KeyboardView(context: Context) : View(context) {
     private var mascotColor = MascotColor.LIME
     private var mascotOffsetX = 0
     private var mascotOffsetY = -3
+    private var suggestionDock = true
+    private var dockProgress = 0f
     private var heightScale = 1f
     private var extraBottomPad = 0
     private var fieldEmpty = true
@@ -313,7 +317,7 @@ class KeyboardView(context: Context) : View(context) {
      * the toolbar keeps its own lane, so neither should grow the keyboard.
      */
     private val mascotBandH: Float
-        get() = if (mascotEnabled && placement == MascotPlacement.ABOVE) dp(34f) else 0f
+        get() = if (mascotEnabled && !suggestionDock && placement == MascotPlacement.ABOVE) dp(34f) else 0f
 
     /** The grab bar at the top of the floating keyboard. */
     private val handleH: Float get() = if (floating) dp(20f) else 0f
@@ -380,12 +384,14 @@ class KeyboardView(context: Context) : View(context) {
         val oldMascot = mascotEnabled
         val oldPlacement = placement
         val oldNumberRow = showNumberRow
+        val oldDock = suggestionDock
 
         previewEnabled = options.keyPreview
         mascotEnabled = options.mascot
         mascotColor = options.mascotColor
         mascotOffsetX = options.mascotOffsetX
         mascotOffsetY = options.mascotOffsetY
+        suggestionDock = options.suggestionDock
         heightScale = options.keyboardHeightPercent / 100f
         extraBottomPad = options.keyboardPadding
         placement = options.mascotPlacement
@@ -394,7 +400,12 @@ class KeyboardView(context: Context) : View(context) {
         theme = appearance.theme(systemIsDark())
 
         val layoutChanged = oldPlacement != placement || oldNumberRow != showNumberRow ||
-            oldScale != heightScale || oldPad != extraBottomPad || oldMascot != mascotEnabled
+            oldScale != heightScale || oldPad != extraBottomPad || oldMascot != mascotEnabled ||
+            oldDock != suggestionDock
+        if (oldDock != suggestionDock) {
+            trayOpen = false
+            dockProgress = 0f
+        }
         if (layoutChanged) requestLayout()
         rebuildTargets()
         invalidate()
@@ -587,6 +598,17 @@ class KeyboardView(context: Context) : View(context) {
             return
         }
 
+        val dockMode = dockMode()
+        if (dockMode) {
+            addDockCardTargets(w, cy, trayOpen)
+            if (trayOpen) {
+                addDockCurtainTargets(w)
+                return
+            }
+            buildKeyTargets(w)
+            return
+        }
+
         targets.add(Target(leftRect, action = if (trayOpen) ToolbarAction.CLOSE else ToolbarAction.MENU))
 
         if (trayOpen) {
@@ -706,6 +728,111 @@ class KeyboardView(context: Context) : View(context) {
                     action = ToolbarAction.TRAY_NEXT,
                 ),
             )
+        }
+    }
+
+    // ---------- suggestion card + options curtain ----------
+
+    private fun dockMode(): Boolean =
+        suggestionDock && panel == Panel.KEYS && captureMode == Capture.NONE
+
+    /** Full-width card in the toolbar band, as wide as the key bed. */
+    private fun dockCardRect(): RectF =
+        RectF(sideMargin, topOffset(), width - sideMargin, topOffset() + toolbarH + dp(4f))
+
+    private fun dockMascotSide(): Float = dockCardRect().height() - dp(10f)
+
+    private fun dockChevronCx(): Float = dockCardRect().right - dp(54f)
+
+    private fun dockMicCx(): Float = dockCardRect().right - dp(22f)
+
+    /** The free space inside the card between the mascot and the right-hand icons. */
+    private fun dockLaneRect(): RectF {
+        val card = dockCardRect()
+        val left = if (mascotEnabled) card.left + dockMascotSide() + dp(20f) else card.left + dp(12f)
+        val right = dockChevronCx() - dp(20f)
+        return RectF(left, card.top + dp(6f), max(left + dp(40f), right), card.bottom - dp(6f))
+    }
+
+    /** The curtain hangs from the card's bottom edge and covers the rest of the keyboard. */
+    private fun dockCurtainRect(): RectF {
+        val card = dockCardRect()
+        return RectF(sideMargin, card.bottom, width - sideMargin, height.toFloat())
+    }
+
+    private fun dockCurtainTileRects(): List<RectF> {
+        val area = dockCurtainRect()
+        val padX = dp(10f)
+        val padY = dp(10f)
+        val gap = dp(7f)
+        val cols = 5
+        val rows = 2
+        val availW = area.width() - padX * 2f - gap * (cols - 1)
+        val availH = area.height() - padY * 2f - gap * (rows - 1)
+        val side = min(availW / cols, availH / rows)
+        if (side <= dp(8f)) return emptyList()
+        val gridW = side * cols + gap * (cols - 1)
+        val gridH = side * rows + gap * (rows - 1)
+        val left = area.left + (area.width() - gridW) / 2f
+        val top = area.top + dp(4f) + ((area.height() - dp(4f) * 2f - gridH) / 2f).coerceAtLeast(0f)
+        val out = ArrayList<RectF>(cols * rows)
+        for (i in 0 until cols * rows) {
+            val c = i % cols
+            val r = i / cols
+            val l = left + c * (side + gap)
+            val t = top + r * (side + gap)
+            out.add(RectF(l, t, l + side, t + side))
+        }
+        return out
+    }
+
+    private fun addDockCardTargets(w: Float, cy: Float, open: Boolean) {
+        val card = dockCardRect()
+        val centerY = card.centerY()
+        val chevCx = dockChevronCx()
+        targets.add(
+            Target(
+                RectF(chevCx - dp(20f), centerY - dp(20f), chevCx + dp(20f), centerY + dp(20f)),
+                action = if (open) ToolbarAction.CLOSE else ToolbarAction.MENU,
+            ),
+        )
+        if (!listening) {
+            val micCx = dockMicCx()
+            targets.add(
+                Target(
+                    RectF(micCx - dp(20f), centerY - dp(20f), micCx + dp(20f), centerY + dp(20f)),
+                    action = ToolbarAction.MIC,
+                ),
+            )
+        }
+        val lane = dockLaneRect()
+        when {
+            listening -> targets.add(Target(RectF(lane), action = ToolbarAction.MIC))
+            bulkUndo || bulkRedo -> targets.add(
+                Target(lane, action = if (bulkRedo) ToolbarAction.REDO else ToolbarAction.UNDO),
+            )
+            copiedChip != null -> {
+                copiedPillRect = RectF(lane)
+                targets.add(Target(RectF(lane), action = ToolbarAction.COPY_PASTE))
+            }
+            else -> {
+                val gap = dp(4f)
+                val cellW = lane.width() / 3f
+                for (i in 0 until 3) {
+                    val l = lane.left + i * cellW
+                    targets.add(
+                        Target(RectF(l + gap, lane.top, l + cellW - gap, lane.bottom), suggestionIndex = i),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun addDockCurtainTargets(w: Float) {
+        val rects = dockCurtainTileRects()
+        rects.forEachIndexed { i, r ->
+            if (i >= trayTiles.size) return@forEachIndexed
+            targets.add(Target(RectF(r), action = trayTiles[i].action, tray = true))
         }
     }
 
@@ -1031,7 +1158,7 @@ class KeyboardView(context: Context) : View(context) {
             copiedChip == null && (fieldEmpty || deletingRecently())
 
     private fun laneVisible(): Boolean =
-        mascotVisible() && placement == MascotPlacement.TOOLBAR
+        !suggestionDock && mascotVisible() && placement == MascotPlacement.TOOLBAR
 
     private fun drawMascotLane(canvas: Canvas, t: KeyboardTheme) {
         val left = dp(56f)
@@ -1192,6 +1319,7 @@ class KeyboardView(context: Context) : View(context) {
         val h = height.toFloat()
         val r = dp(t.toolbarRadiusDp)
         val lane = laneVisible()
+        val dock = dockMode()
 
         publishMascotState()
         if (floating) {
@@ -1206,22 +1334,23 @@ class KeyboardView(context: Context) : View(context) {
             canvas.drawRoundRect(tmpRect, dp(2f), dp(2f), fill)
         } else {
             drawTopRounded(canvas, h, w, r, t.base, topOffset())
-            drawTopRounded(canvas, topOffset() + toolbarH, w, r, t.toolbar, topOffset())
+            if (!dock) drawTopRounded(canvas, topOffset() + toolbarH, w, r, t.toolbar, topOffset())
         }
+        if (dock) drawDockCard(canvas, t)
 
         if (panel == Panel.CLIPBOARD) {
             drawLeftLabel(canvas, "Clipboard", dp(56f), toolbarCenterY(), sp(16f), t.text)
-        } else if (sensitive && !trayOpen && captureMode == Capture.NONE) {
+        } else if (sensitive && !trayOpen && !dock && captureMode == Capture.NONE) {
             drawLabel(canvas, "Private field", w / 2f, toolbarCenterY(), sp(14f), t.textDim)
         }
 
         if (captureMode != Capture.NONE) drawCapturePill(canvas, t, w)
 
-        if (listening && !trayOpen && captureMode == Capture.NONE) {
+        if (!dock && listening && !trayOpen && captureMode == Capture.NONE) {
             drawListeningPill(canvas, t, w)
-        } else if ((bulkUndo || bulkRedo) && !trayOpen && captureMode == Capture.NONE) {
+        } else if (!dock && (bulkUndo || bulkRedo) && !trayOpen && captureMode == Capture.NONE) {
             drawBulkUndoPill(canvas, t, w)
-        } else if (copiedChip != null && !trayOpen && captureMode == Capture.NONE) {
+        } else if (!dock && copiedChip != null && !trayOpen && captureMode == Capture.NONE) {
             drawCopiedChip(canvas, t, w)
         }
 
@@ -1229,10 +1358,13 @@ class KeyboardView(context: Context) : View(context) {
             val key = tg.key
             val action = tg.action
             when {
-                tg.suggestionIndex >= 0 -> if (!lane) drawChip(canvas, tg, t)
+                tg.suggestionIndex >= 0 -> if (!lane && !dock) drawChip(canvas, tg, t)
                 tg.resultIndex >= 0 -> drawResult(canvas, tg, t)
                 tg.tabIndex >= 0 -> drawTab(canvas, tg, t)
-                action != null -> if (action != ToolbarAction.COPY_PASTE && !tg.tray) {
+                action != null -> if (action != ToolbarAction.COPY_PASTE && !tg.tray &&
+                    !(dock && (action == ToolbarAction.MENU || action == ToolbarAction.CLOSE ||
+                        action == ToolbarAction.MIC))
+                ) {
                     // The mic button hides behind the suggestion row (not listening,
                     // no undo pill, no copied chip) so only draw it when no chip targets
                     // overlap its position.
@@ -1252,12 +1384,16 @@ class KeyboardView(context: Context) : View(context) {
         }
 
         if (clipSheetVisible) drawClipSheet(canvas, t)
-        if (trayOpen) drawTrayGrid(canvas, t)
+        if (trayOpen) {
+            if (dock) drawDockCurtain(canvas, t) else drawTrayGrid(canvas, t)
+        } else if (dock) {
+            drawDockCurtain(canvas, t)
+        }
 
         if (lane) {
             drawMascotLane(canvas, t)
             postInvalidateOnAnimation()
-        } else if (mascotEnabled && placement == MascotPlacement.ABOVE && mascotVisible()) {
+        } else if (!dock && mascotEnabled && placement == MascotPlacement.ABOVE && mascotVisible()) {
             drawBandMascot(canvas, t)
             postInvalidateOnAnimation()
         }
@@ -1396,6 +1532,236 @@ class KeyboardView(context: Context) : View(context) {
             tmpRect.set(cx + r + dp(5f), cy - dp(8f), cx + r + dp(7f), cy + dp(8f))
             canvas.drawRoundRect(tmpRect, dp(1f), dp(1f), fill)
         }
+    }
+
+    // ---------- suggestion card + curtain drawing ----------
+
+    private fun drawDockCard(canvas: Canvas, t: KeyboardTheme) {
+        val card = dockCardRect()
+        val rr = min(dp(t.toolbarRadiusDp + 6f), card.height() / 2f)
+        fill.shader = null
+        fill.color = t.card
+        canvas.drawRoundRect(card, rr, rr, fill)
+        strokePaint.color = ColorUtils.blendARGB(t.card, t.text, 0.07f)
+        strokePaint.strokeWidth = dp(1f)
+        val inset = RectF(card)
+        inset.inset(dp(0.5f), dp(0.5f))
+        canvas.drawRoundRect(inset, rr, rr, strokePaint)
+
+        if (mascotEnabled) drawDockMascot(canvas, t, card)
+        drawDockLane(canvas, t)
+
+        val chevCx = dockChevronCx()
+        val accent = ColorUtils.blendARGB(t.accent, t.text, 0.35f)
+        drawDockChevron(canvas, chevCx, card.centerY(), trayOpen, accent)
+        drawIcon(
+            canvas,
+            R.drawable.ic_mic,
+            dockMicCx(),
+            card.centerY(),
+            dp(20f),
+            if (listening) t.accent else t.icon,
+        )
+    }
+
+    /** A lit, shaded token so Reo reads as a physical object rather than a flat square. */
+    private fun drawDockMascot(canvas: Canvas, t: KeyboardTheme, card: RectF) {
+        val side = dockMascotSide()
+        val left = card.left + dp(10f)
+        val top = card.centerY() - side / 2f
+        tmpRect.set(left, top, left + side, top + side)
+        val body = mascotColor.body
+        val hi = ColorUtils.blendARGB(body, Color.WHITE, 0.58f)
+        val lo = ColorUtils.blendARGB(body, Color.BLACK, 0.34f)
+        fill.shader = RadialGradient(
+            tmpRect.centerX() - side * 0.16f,
+            tmpRect.centerY() - side * 0.20f,
+            side * 0.92f,
+            intArrayOf(hi, body, lo),
+            floatArrayOf(0f, 0.55f, 1f),
+            Shader.TileMode.CLAMP,
+        )
+        val mr = min(dp(15f), side / 2f)
+        canvas.drawRoundRect(tmpRect, mr, mr, fill)
+        fill.shader = null
+
+        // Gloss highlight.
+        fill.color = ColorUtils.setAlphaComponent(Color.WHITE, 100)
+        tmpRectThumb.set(
+            tmpRect.left + side * 0.18f, tmpRect.top + side * 0.12f,
+            tmpRect.left + side * 0.60f, tmpRect.top + side * 0.32f,
+        )
+        canvas.drawOval(tmpRectThumb, fill)
+
+        val cx = tmpRect.centerX()
+        val cy = tmpRect.centerY()
+        fill.color = mascotColor.ink
+        val eyeW = side * 0.10f
+        val eyeH = side * 0.20f
+        val eyeGap = side * 0.17f
+        canvas.drawRoundRect(
+            RectF(cx - eyeGap - eyeW / 2f, cy - eyeH / 2f - side * 0.03f,
+                cx - eyeGap + eyeW / 2f, cy + eyeH / 2f - side * 0.03f),
+            eyeW / 2f, eyeW / 2f, fill,
+        )
+        canvas.drawRoundRect(
+            RectF(cx + eyeGap - eyeW / 2f, cy - eyeH / 2f - side * 0.03f,
+                cx + eyeGap + eyeW / 2f, cy + eyeH / 2f - side * 0.03f),
+            eyeW / 2f, eyeW / 2f, fill,
+        )
+        strokePaint.color = mascotColor.ink
+        strokePaint.strokeWidth = max(dp(1.4f), side * 0.045f)
+        tmpRectThumb.set(cx - side * 0.15f, cy + side * 0.02f, cx + side * 0.15f, cy + side * 0.24f)
+        canvas.drawArc(tmpRectThumb, 20f, 140f, false, strokePaint)
+    }
+
+    private fun drawDockLane(canvas: Canvas, t: KeyboardTheme) {
+        val lane = dockLaneRect()
+        if (lane.width() <= dp(20f)) return
+        textPaint.textAlign = Paint.Align.LEFT
+        textPaint.typeface = Typeface.DEFAULT
+        val baseY = lane.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f
+
+        when {
+            listening -> {
+                textPaint.textSize = sp(14f)
+                textPaint.color = t.accent
+                canvas.drawText("Listening…", lane.left + dp(12f), baseY, textPaint)
+            }
+            bulkUndo || bulkRedo -> {
+                drawIcon(
+                    canvas, if (bulkRedo) R.drawable.ic_redo else R.drawable.ic_undo,
+                    lane.left + dp(14f), lane.centerY(), dp(18f), t.accent,
+                )
+                textPaint.textSize = sp(14f)
+                textPaint.color = t.text
+                canvas.drawText(
+                    if (bulkRedo) "Redo delete" else "Undo delete",
+                    lane.left + dp(32f), baseY, textPaint,
+                )
+            }
+            copiedChip != null -> {
+                val pill = RectF(lane)
+                fill.color = ColorUtils.blendARGB(t.card, t.accent, 0.10f)
+                canvas.drawRoundRect(pill, dp(14f), dp(14f), fill)
+                drawIcon(canvas, R.drawable.ic_clipboard, pill.left + dp(16f), pill.centerY(), dp(17f), t.accent)
+                textPaint.textSize = sp(12f)
+                textPaint.color = t.text
+                val labelLeft = pill.left + dp(30f)
+                val maxW = (pill.right - pill.left - dp(40f)).coerceAtLeast(dp(20f))
+                val snippet = TextUtils.ellipsize(copiedChip ?: "", textPaint, maxW, TextUtils.TruncateAt.END)
+                canvas.drawText("Paste  ", labelLeft, baseY, textPaint)
+                textPaint.color = t.textDim
+                val shift = textPaint.measureText("Paste  ")
+                canvas.drawText(snippet, 0, snippet.length, labelLeft + shift, baseY, textPaint)
+            }
+            else -> {
+                val words = suggestions.take(3)
+                if (words.isEmpty()) {
+                    textPaint.textSize = sp(12f)
+                    textPaint.color = t.textDim
+                    canvas.drawText("start typing…", lane.left + dp(12f), baseY, textPaint)
+                } else {
+                    val cellW = lane.width() / 3f
+                    textPaint.textSize = sp(16f)
+                    for (i in words.indices) {
+                        val cellLeft = lane.left + i * cellW
+                        if (i > 0) {
+                            fill.color = ColorUtils.blendARGB(t.card, t.text, 0.10f)
+                            canvas.drawRect(
+                                cellLeft - dp(0.5f), lane.top + dp(4f),
+                                cellLeft + dp(0.5f), lane.bottom - dp(4f), fill,
+                            )
+                        }
+                        textPaint.color = if (i == 0 && !composingActive) t.accent else t.text
+                        val maxW = cellW - dp(16f)
+                        var size = sp(16f)
+                        textPaint.textSize = size
+                        val word = words[i]
+                        while (size > sp(11f) && textPaint.measureText(word) > maxW) {
+                            size -= sp(0.5f)
+                            textPaint.textSize = size
+                        }
+                        val shown = TextUtils.ellipsize(word, textPaint, maxW, TextUtils.TruncateAt.END)
+                        canvas.drawText(shown, 0, shown.length, cellLeft + dp(10f), baseY, textPaint)
+                    }
+                    textPaint.typeface = Typeface.DEFAULT
+                }
+            }
+        }
+        textPaint.textAlign = Paint.Align.CENTER
+    }
+
+    private fun drawDockChevron(canvas: Canvas, cx: Float, cy: Float, down: Boolean, color: Int) {
+        strokePaint.color = color
+        strokePaint.strokeWidth = dp(2f)
+        val d = dp(5f)
+        path.reset()
+        if (down) {
+            path.moveTo(cx - d, cy - d * 0.55f)
+            path.lineTo(cx, cy + d * 0.55f)
+            path.lineTo(cx + d, cy - d * 0.55f)
+        } else {
+            path.moveTo(cx - d, cy + d * 0.55f)
+            path.lineTo(cx, cy - d * 0.55f)
+            path.lineTo(cx + d, cy + d * 0.55f)
+        }
+        canvas.drawPath(path, strokePaint)
+    }
+
+    private fun drawDockCurtain(canvas: Canvas, t: KeyboardTheme) {
+        val area = dockCurtainRect()
+        if (area.height() <= dp(4f)) return
+        val target = if (trayOpen) 1f else 0f
+        dockProgress += (target - dockProgress) * 0.22f
+        if (abs(target - dockProgress) < 0.003f) dockProgress = target
+        if (dockProgress <= 0.001f) return
+
+        val rr = min(dp(t.toolbarRadiusDp + 6f), area.width() / 2f)
+        val visibleBottom = area.top + area.height() * dockProgress
+        canvas.save()
+        canvas.clipRect(area.left, area.top, area.right, visibleBottom)
+
+        fill.shader = null
+        fill.color = t.card
+        path.reset()
+        path.addRoundRect(
+            area,
+            floatArrayOf(0f, 0f, 0f, 0f, rr, rr, rr, rr),
+            Path.Direction.CW,
+        )
+        canvas.drawPath(path, fill)
+        strokePaint.color = ColorUtils.blendARGB(t.card, t.text, 0.06f)
+        strokePaint.strokeWidth = dp(1f)
+        canvas.drawPath(path, strokePaint)
+
+        val rects = dockCurtainTileRects()
+        for (i in rects.indices) {
+            if (i >= trayTiles.size) break
+            val tile = trayTiles[i]
+            val r = rects[i]
+            val pressed = targets.any { it.tray && it.action == tile.action && isPressed(it) }
+            fill.color = if (pressed) {
+                ColorUtils.blendARGB(t.card, t.text, 0.14f)
+            } else {
+                ColorUtils.blendARGB(t.card, t.text, 0.05f)
+            }
+            val tr = min(dp(16f), r.width() * 0.28f)
+            canvas.drawRoundRect(r, tr, tr, fill)
+
+            val iconCy = r.top + r.height() * 0.38f
+            drawIcon(canvas, tile.icon, r.centerX(), iconCy, r.width() * 0.34f, t.icon)
+            textPaint.textAlign = Paint.Align.CENTER
+            textPaint.textSize = sp(9f)
+            textPaint.color = t.textDim
+            textPaint.typeface = Typeface.DEFAULT
+            val label = TextUtils.ellipsize(
+                tile.label, textPaint, r.width() - dp(4f), TextUtils.TruncateAt.END,
+            )
+            canvas.drawText(label, 0, label.length, r.centerX(), r.top + r.height() * 0.80f, textPaint)
+        }
+        canvas.restore()
+        if (dockProgress < 1f) postInvalidateOnAnimation()
     }
 
     private fun drawToolbarButton(canvas: Canvas, tg: Target, action: ToolbarAction, t: KeyboardTheme) {
@@ -1872,7 +2238,7 @@ class KeyboardView(context: Context) : View(context) {
                     gripRawY = event.rawY
                     return true
                 }
-                if (trayOpen && trayPointer == -1 && i == 0 && y > topOffset() + toolbarH) {
+                if (trayOpen && !dockMode() && trayPointer == -1 && i == 0 && y > topOffset() + toolbarH) {
                     trayPointer = event.getPointerId(i)
                     trayDownX = x
                     trayMoved = false

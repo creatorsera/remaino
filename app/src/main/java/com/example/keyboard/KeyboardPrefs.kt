@@ -94,6 +94,16 @@ class KeyboardPrefs(context: Context) {
         get() = MascotColor.from(prefs.getString(KEY_MASCOT_COLOR, null))
         set(value) { prefs.edit().putString(KEY_MASCOT_COLOR, value.key).apply() }
 
+    /** Reo's size at the cursor, as a percentage (70..140). Only the overlay uses it. */
+    var mascotScale: Int
+        get() = prefs.getInt(KEY_MASCOT_SCALE, 100)
+        set(value) { prefs.edit().putInt(KEY_MASCOT_SCALE, value.coerceIn(70, 140)).apply() }
+
+    /** Draw the rounded suggestion card and its options curtain instead of the flat strip. */
+    var suggestionDock: Boolean
+        get() = prefs.getBoolean(KEY_SUGGESTION_DOCK, true)
+        set(value) { prefs.edit().putBoolean(KEY_SUGGESTION_DOCK, value).apply() }
+
     /** Fine nudge, in dp. Negative is up. */
     var mascotOffsetY: Int
         get() = prefs.getInt(KEY_MASCOT_OFFSET_Y, -3)
@@ -222,6 +232,8 @@ class KeyboardPrefs(context: Context) {
         .put("mascotColor", mascotColor.key)
         .put("mascotOffsetX", mascotOffsetX)
         .put("mascotOffsetY", mascotOffsetY)
+        .put("mascotScale", mascotScale)
+        .put("suggestionDock", suggestionDock)
         .put("haptics", haptics)
         .put("sound", sound)
         .put("autoCapitalize", autoCapitalize)
@@ -250,6 +262,8 @@ class KeyboardPrefs(context: Context) {
         if (json.has("mascotColor")) mascotColor = MascotColor.from(json.optString("mascotColor"))
         if (json.has("mascotOffsetX")) mascotOffsetX = json.optInt("mascotOffsetX", 0)
         if (json.has("mascotOffsetY")) mascotOffsetY = json.optInt("mascotOffsetY", -3)
+        if (json.has("mascotScale")) mascotScale = json.optInt("mascotScale", 100)
+        if (json.has("suggestionDock")) suggestionDock = json.optBoolean("suggestionDock", true)
         if (json.has("haptics")) haptics = json.optBoolean("haptics")
         if (json.has("sound")) sound = json.optBoolean("sound")
         if (json.has("autoCapitalize")) autoCapitalize = json.optBoolean("autoCapitalize")
@@ -335,6 +349,8 @@ class KeyboardPrefs(context: Context) {
         const val KEY_MASCOT_COLOR = "mascot_color"
         const val KEY_MASCOT_OFFSET_X = "mascot_offset_x"
         const val KEY_MASCOT_OFFSET_Y = "mascot_offset_y"
+        const val KEY_MASCOT_SCALE = "mascot_scale"
+        const val KEY_SUGGESTION_DOCK = "suggestion_dock"
         const val KEY_HAPTICS = "haptics"
         const val KEY_SOUND = "sound"
         const val KEY_AUTO_CAP = "auto_capitalize"

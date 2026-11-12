@@ -532,11 +532,20 @@ class SettingsActivity : Activity() {
             updateMascotChips()
         })
         keys.addView(mascotPlacementRow())
+        val scaleLabel = label("", 13f, textDim, false)
+        keys.addView(
+            sliderRow("Reo size (at cursor)", scaleLabel, 70, 140, options.mascotScale) {
+                options.mascotScale = it
+                scaleLabel.text = "${it}%"
+            },
+        )
+        scaleLabel.text = "${options.mascotScale}%"
         pane.addView(keys)
         val note = card()
         note.addView(
             label(
-                "At cursor draws Reo beside the caret. Toolbar keeps Reo in the suggestion strip. " +
+                "At cursor draws Reo beside the caret, and the size slider only scales that " +
+                    "at-cursor Reo. Toolbar keeps Reo inside the rounded suggestion card. " +
                     "Above adds a small strip above the keys.",
                 12f, textDim, false,
             ).also { it.setPadding(dp(15), dp(4), dp(15), dp(8)) },
@@ -579,6 +588,13 @@ class SettingsActivity : Activity() {
 
         val suggestions = card()
         suggestions.addView(sectionHeader("Suggestions"))
+        suggestions.addView(
+            switchRow(
+                "Suggestion card",
+                "A rounded card with Reo, the word lane and an options curtain",
+                options.suggestionDock,
+            ) { options.suggestionDock = it },
+        )
         suggestions.addView(
             switchRow(
                 "Block inappropriate suggestions",

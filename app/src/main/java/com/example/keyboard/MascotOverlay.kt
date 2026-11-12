@@ -27,7 +27,9 @@ class MascotOverlay(private val context: Context) {
     private var view: MascotView? = null
     private var params: WindowManager.LayoutParams? = null
 
-    val sizePx: Int get() = (64 * context.resources.displayMetrics.density).toInt()
+    val sizePx: Int
+        get() = (64 * context.resources.displayMetrics.density *
+            (prefs.mascotScale.coerceIn(70, 140) / 100f)).toInt()
 
     fun canShow(): Boolean = Settings.canDrawOverlays(context)
 
@@ -43,6 +45,8 @@ class MascotOverlay(private val context: Context) {
         if (existing != null && existingParams != null) {
             existingParams.x = x
             existingParams.y = y
+            existingParams.width = sizePx
+            existingParams.height = sizePx
             existing.deleting = deleting
             existing.mascotColor = prefs.mascotColor
             try {
