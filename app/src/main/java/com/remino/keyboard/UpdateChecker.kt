@@ -30,6 +30,13 @@ object UpdateChecker {
     private const val RELEASES_PAGE = "https://github.com/$REPO/releases"
     private const val MAX_APK_BYTES = 150L * 1024L * 1024L
     private const val MAX_CHECKSUM_BYTES = 4L * 1024L
+    /** Only GitHub over HTTPS may serve release metadata or APKs. */
+    private val ALLOWED_HOSTS = setOf(
+        "api.github.com",
+        "github.com",
+        "objects.githubusercontent.com",
+        "release-assets.githubusercontent.com",
+    )
 
     data class Release(
         val tag: String,
@@ -157,8 +164,10 @@ object UpdateChecker {
                 connectTimeout = 15_000
                 readTimeout = 30_000
             }
-            if (connection.responseCode !in 200..299) {
-                throw UpdateException("GitHub returned ${connection.responseCode}.")
+            val code = connection.responseCode
+            requireSafe(connection)
+            if (code !in 200..299) {
+                throw UpdateException("GitHub returned $code.")
             }
             val total = connection.contentLengthLong.takeIf { it > 0L } ?: expectedSize
             if (total > MAX_APK_BYTES) throw UpdateException("The update file is too large.")
@@ -250,6 +259,8 @@ object UpdateChecker {
         try {
             connection = open(url)
             val code = connection.responseCode
+            // Redirects are resolved by now, so the final host is known.
+            requireSafe(connection)
             if (code == 404) throw NoReleaseException()
             if (code !in 200..299) {
                 val reason = if (code == 403) "GitHub rate limit reached" else "GitHub returned $code"
@@ -271,8 +282,11 @@ object UpdateChecker {
         }
     }
 
-    private fun open(url: String): HttpURLConnection =
-        (URL(url).openConnection() as HttpURLConnection).apply {
+    private fun open(url: String): HttpURLConnection {
+        val parsed = URL(url)
+        if (parsed.protocol != "https") throw UpdateException("Updates must use HTTPS.")
+        if (!isAllowedHost(parsed.host)) throw UpdateException("Unexpected update host.")
+        return (parsed.openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             instanceFollowRedirects = true
             connectTimeout = 8000
@@ -280,6 +294,20 @@ object UpdateChecker {
             setRequestProperty("Accept", "application/vnd.github+json")
             setRequestProperty("User-Agent", "Remino-Android")
         }
+    }
+
+    private fun isAllowedHost(host: String): Boolean {
+        val h = host.lowercase()
+        return h in ALLOWED_HOSTS || h.endsWith(".githubusercontent.com")
+    }
+
+    /** A redirect must not downgrade to plain HTTP or leave GitHub. */
+    private fun requireSafe(connection: HttpURLConnection) {
+        val finalUrl = connection.url
+        if (finalUrl.protocol != "https" || !isAllowedHost(finalUrl.host)) {
+            throw UpdateException("The update was redirected to an unsafe location.")
+        }
+    }
 
     /** True when [remote] looks newer than [installed]. Both are dotted version names. */
     fun isNewer(remote: String, installed: String): Boolean {

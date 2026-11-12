@@ -230,6 +230,8 @@ class KeyboardView(context: Context) : View(context) {
     private val panelBackspaceKey = Key("", KeyType.BACKSPACE)
 
     private val targets = ArrayList<Target>()
+    /** Key bed drawn beneath the options panel while it unfolds (never tappable). */
+    private val underPanelKeys = ArrayList<Target>()
     private val pressedByPointer = HashMap<Int, Target>()
     private var backspacePointer = -1
     private var backspaceDownY = 0f
@@ -301,9 +303,8 @@ class KeyboardView(context: Context) : View(context) {
         TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, v, resources.displayMetrics)
 
     private val toolbarH: Float get() = dp(48f)
-    /** Height of the floating suggestion card, and the air gap under it. */
-    private val dockCardH: Float get() = dp(54f)
-    private val dockGap: Float get() = dp(9f)
+    /** Height of the suggestion band, which is the top slice of the keyboard. */
+    private val dockCardH: Float get() = dp(50f)
     private val rowH: Float get() = dp(46f * heightScale)
     private val rowGap: Float get() = dp(4f)
     private val sideMargin: Float get() = dp(1.5f)
@@ -333,11 +334,12 @@ class KeyboardView(context: Context) : View(context) {
     private fun rowCount(): Int = Layouts.rowCount(showNumberRow)
 
     /**
-     * The dock keeps the card in its own band above the key bed. The band is
-     * transparent under the card, so the app shows through and there is no seam.
+     * The suggestion band is part of the keyboard surface: the shell colour runs
+     * straight from the band into the key bed, so the card sits *on* the keyboard
+     * instead of hovering above it.
      */
     private fun keyboardTop(): Float =
-        if (dockMode()) topOffset() + dockCardH + dockGap else topOffset() + toolbarH
+        if (dockMode()) topOffset() + dockCardH else topOffset() + toolbarH
 
     private fun keysTop(): Float = keyboardTop() + topPad
     private fun keysHeight(): Float = rowCount() * rowH + (rowCount() - 1) * rowGap
@@ -532,6 +534,7 @@ class KeyboardView(context: Context) : View(context) {
 
     private fun rebuildTargets() {
         targets.clear()
+        underPanelKeys.clear()
         copiedPillRect = null
         val w = width.toFloat()
         if (w <= 0f) return
@@ -615,6 +618,7 @@ class KeyboardView(context: Context) : View(context) {
         if (dockMode) {
             if (trayOpen) {
                 addDockCurtainTargets(w)
+                buildKeyTargets(w, underPanelKeys)
                 return
             }
             if (panel != Panel.KEYS) {
@@ -790,17 +794,17 @@ class KeyboardView(context: Context) : View(context) {
     /** The card has grown into the options screen or a panel. */
     private fun dockOpen(): Boolean = dockMode() && (trayOpen || panel != Panel.KEYS)
 
-    /** Full-width card, as wide as the key bed, floating above the keyboard. */
+    /** Full-width suggestion band, docked to the top of the key bed. */
     private fun dockCardRect(): RectF =
-        RectF(sideMargin, topOffset(), width - sideMargin, topOffset() + dockCardH)
+        RectF(0f, topOffset(), width.toFloat(), topOffset() + dockCardH)
 
     private fun dockMascotRect(): RectF {
         val card = dockCardRect()
         val side = card.height() - dp(12f)
         return RectF(
-            card.left + dp(8f),
+            card.left + dp(10f),
             card.centerY() - side / 2f,
-            card.left + dp(8f) + side,
+            card.left + dp(10f) + side,
             card.centerY() + side / 2f,
         )
     }
@@ -816,12 +820,9 @@ class KeyboardView(context: Context) : View(context) {
         return RectF(left, card.top + dp(6f), max(left + dp(40f), right), card.bottom - dp(6f))
     }
 
-    /** The panel covers everything from the mascot to the right and bottom edges. */
-    private fun dockCurtainRect(): RectF {
-        val card = dockCardRect()
-        val left = if (mascotEnabled) dockMascotRect().left else card.left
-        return RectF(left, card.top, width.toFloat(), height.toFloat())
-    }
+    /** The open panel is the keyboard: full width, from the card band to the bottom. */
+    private fun dockCurtainRect(): RectF =
+        RectF(0f, topOffset(), width.toFloat(), height.toFloat())
 
     private val dockHeaderH: Float get() = dp(54f)
 
@@ -945,7 +946,7 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
-    private fun buildKeyTargets(w: Float) {
+    private fun buildKeyTargets(w: Float, out: MutableList<Target> = targets) {
         val rows = if (showingSymbols) Layouts.symbols(showNumberRow) else Layouts.letters(showNumberRow)
         val avail = w - 2 * sideMargin
         rows.forEachIndexed { r, row ->
@@ -956,7 +957,7 @@ class KeyboardView(context: Context) : View(context) {
             for (key in row) {
                 val kw = key.weight * unit
                 if (key.type != KeyType.SPACER) {
-                    targets.add(Target(RectF(x, top, x + kw, top + rowH), key = key))
+                    out.add(Target(RectF(x, top, x + kw, top + rowH), key = key))
                 }
                 x += kw + keyGap
             }
@@ -1452,16 +1453,12 @@ class KeyboardView(context: Context) : View(context) {
             fill.color = t.textDim
             tmpRect.set(w / 2f - dp(22f), dp(7f), w / 2f + dp(22f), dp(11f))
             canvas.drawRoundRect(tmpRect, dp(2f), dp(2f), fill)
-        } else if (!dockExpanded) {
-            // An open dock panel leaves the strip beside Reo transparent, so the
-            // app shows through instead of a dark keyboard band.
-            drawTopRounded(canvas, h, w, r, t.base, if (dock) keyboardTop() else topOffset())
+        } else {
+            // The keyboard is one continuous surface. The suggestion band is its top
+            // slice, and an open panel grows out of that same surface.
+            drawTopRounded(canvas, h, w, r, t.base, topOffset())
             if (!dock) drawTopRounded(canvas, topOffset() + toolbarH, w, r, t.toolbar, topOffset())
         }
-        if (dock) {
-            if (dockExpanded) drawDockCurtain(canvas, t) else drawDockCard(canvas, t)
-        }
-
         if (panel == Panel.CLIPBOARD && !dock) {
             drawLeftLabel(canvas, "Clipboard", dp(56f), toolbarCenterY(), sp(16f), t.text)
         } else if (sensitive && !trayOpen && !dock && captureMode == Capture.NONE) {
@@ -1498,6 +1495,20 @@ class KeyboardView(context: Context) : View(context) {
                     }
                 }
                 key != null -> drawKey(canvas, tg, key, t)
+            }
+        }
+
+        if (dock) {
+            if (dockExpanded) {
+                // Keep the key bed visible beneath the unfolding panel so the surface
+                // reads as one continuous keyboard, not a curtain over a hole.
+                for (tg in underPanelKeys) {
+                    val key = tg.key ?: continue
+                    drawKey(canvas, tg, key, t)
+                }
+                drawDockCurtain(canvas, t)
+            } else {
+                drawDockCard(canvas, t)
             }
         }
 
@@ -1650,14 +1661,15 @@ class KeyboardView(context: Context) : View(context) {
 
     private fun drawDockCard(canvas: Canvas, t: KeyboardTheme) {
         val card = dockCardRect()
-        val rr = min(dp(t.toolbarRadiusDp), card.height() / 2f)
-        fill.shader = null
-        // One flat surface with the keyboard shell: no drop shadow, no halo.
-        fill.color = t.base
-        canvas.drawRoundRect(card, rr, rr, fill)
+        // The base surface is already painted, so the band is just its top slice.
+        // One hairline gives the suggestions an edge without turning the card into
+        // a separate floating object.
+        strokePaint.color = ColorUtils.blendARGB(t.base, t.text, 0.07f)
+        strokePaint.strokeWidth = dp(1f)
+        canvas.drawLine(dp(14f), card.bottom - dp(0.5f), width - dp(14f), card.bottom - dp(0.5f), strokePaint)
 
         if (mascotEnabled) {
-            drawDockMascot(canvas, t, dockMascotRect(), trayOpen)
+            drawDockMascot(canvas, t, dockMascotRect())
         } else {
             drawIcon(
                 canvas, R.drawable.ic_grid,
@@ -1684,10 +1696,10 @@ class KeyboardView(context: Context) : View(context) {
      * A lit, shaded token so Reo reads as a physical object rather than a flat
      * square. Tapping it bounces the token and switches it to the excited pose.
      */
-    private fun drawDockMascot(canvas: Canvas, t: KeyboardTheme, rect: RectF, excitedNow: Boolean) {
+    private fun drawDockMascot(canvas: Canvas, t: KeyboardTheme, rect: RectF) {
         val now = SystemClock.uptimeMillis()
         val sinceTap = (now - mascotExcitedAt).coerceAtLeast(0L)
-        val excited = excitedNow || sinceTap < 900L
+        val excited = sinceTap < 900L
         val bounce = if (sinceTap < 420L) {
             sin((sinceTap / 420f) * Math.PI).toFloat() * 0.12f
         } else {
@@ -1727,31 +1739,23 @@ class KeyboardView(context: Context) : View(context) {
         strokePaint.color = mascotColor.ink
         strokePaint.strokeWidth = max(dp(1.6f), side * 0.05f)
         if (excited) {
-            // ^ ^ happy eyes.
-            val eyeTop = ccy - side * 0.16f
+            // Happy, closed eyes read as one ^ ^ swoop rather than two frowns.
+            val eyeTop = ccy - side * 0.14f
             for (sign in intArrayOf(-1, 1)) {
                 val ex = ccx + sign * eyeGap
                 tmpRectThumb.set(
-                    ex - eyeW * 0.9f, eyeTop,
-                    ex + eyeW * 0.9f, eyeTop + eyeW * 1.1f,
+                    ex - eyeW * 1.05f, eyeTop,
+                    ex + eyeW * 1.05f, eyeTop + eyeW * 1.15f,
                 )
-                canvas.drawArc(tmpRectThumb, 200f, 140f, false, strokePaint)
+                canvas.drawArc(tmpRectThumb, 190f, 160f, false, strokePaint)
             }
-            // Open, cheering mouth.
+            // Small open smile; no sparks poking out of the token.
             fill.color = mascotColor.ink
             tmpRectThumb.set(
-                ccx - side * 0.11f, ccy + side * 0.03f,
-                ccx + side * 0.11f, ccy + side * 0.22f,
+                ccx - side * 0.09f, ccy + side * 0.04f,
+                ccx + side * 0.09f, ccy + side * 0.19f,
             )
-            canvas.drawRoundRect(tmpRectThumb, side * 0.05f, side * 0.05f, fill)
-            // Two little sparks at the top corners.
-            strokePaint.strokeWidth = max(dp(1.2f), side * 0.035f)
-            for (sign in intArrayOf(-1, 1)) {
-                val bx = ccx + sign * side * 0.42f
-                val by = tmpRect.top - side * 0.03f
-                canvas.drawLine(bx - side * 0.04f, by, bx + side * 0.04f, by, strokePaint)
-                canvas.drawLine(bx, by - side * 0.04f, bx, by + side * 0.04f, strokePaint)
-            }
+            canvas.drawRoundRect(tmpRectThumb, side * 0.075f, side * 0.075f, fill)
         } else {
             val eyeH = side * 0.20f
             fill.color = mascotColor.ink
@@ -1844,13 +1848,15 @@ class KeyboardView(context: Context) : View(context) {
                     for (i in words.indices) {
                         val cellLeft = lane.left + i * cellW
                         if (i > 0) {
-                            fill.color = ColorUtils.blendARGB(t.card, t.text, 0.10f)
+                            fill.color = ColorUtils.blendARGB(t.base, t.text, 0.09f)
                             canvas.drawRect(
-                                cellLeft - dp(0.5f), lane.top + dp(4f),
-                                cellLeft + dp(0.5f), lane.bottom - dp(4f), fill,
+                                cellLeft - dp(0.5f), lane.centerY() - dp(9f),
+                                cellLeft + dp(0.5f), lane.centerY() + dp(9f), fill,
                             )
                         }
-                        textPaint.color = if (i == 0 && !composingActive) t.accent else t.text
+                        // All suggestions are ink. Colouring the first one lime made a
+                        // one-letter suggestion ("I") look like a stray text cursor.
+                        textPaint.color = t.text
                         val maxW = cellW - dp(16f)
                         var size = sp(16f)
                         textPaint.textSize = size
@@ -1964,9 +1970,18 @@ class KeyboardView(context: Context) : View(context) {
     /** Reo + a title, used by both the options grid and the docked panels. */
     private fun drawDockHeader(canvas: Canvas, t: KeyboardTheme) {
         val area = dockCurtainRect()
-        val reo = dockHeaderReoRect()
+        val from = dockMascotRect()
+        val to = dockHeaderReoRect()
+        val p = if (trayOpen) dockProgress.coerceIn(0f, 1f) else 1f
+        // Reo shrinks into the header as the panel grows, so the two never jump.
+        val reo = RectF(
+            from.left + (to.left - from.left) * p,
+            from.top + (to.top - from.top) * p,
+            from.right + (to.right - from.right) * p,
+            from.bottom + (to.bottom - from.bottom) * p,
+        )
         if (mascotEnabled) {
-            drawDockMascot(canvas, t, reo, trayOpen)
+            drawDockMascot(canvas, t, reo)
         } else {
             drawIcon(canvas, R.drawable.ic_grid, reo.centerX(), reo.centerY(), dp(20f), t.icon)
         }
@@ -2386,9 +2401,9 @@ class KeyboardView(context: Context) : View(context) {
         val cy = r.centerY()
 
         if (key.type == KeyType.ENTER) {
-            // Inverted round bubble (pill)
+            // The accent key, but the same corner language as every other key.
             fill.color = if (pressed) ColorUtils.blendARGB(t.accent, Color.GRAY, 0.25f) else t.accent
-            canvas.drawRoundRect(r, r.height() / 2f, r.height() / 2f, fill)
+            canvas.drawRoundRect(r, dp(t.keyRadiusDp), dp(t.keyRadiusDp), fill)
             drawIcon(canvas, R.drawable.ic_enter, cx, cy, dp(26f), t.onAccent)
             return
         }
@@ -2402,11 +2417,9 @@ class KeyboardView(context: Context) : View(context) {
             else -> t.specialKey
         }
         fill.color = if (pressed) ColorUtils.blendARGB(base, Color.WHITE, 0.18f) else base
-        val radius = if (key.type == KeyType.SYMBOLS || key.type == KeyType.LETTERS) {
-            r.height() / 2f
-        } else {
-            dp(t.keyRadiusDp)
-        }
+        // One radius for letters, symbols, space and controls. The old half-height
+        // radius made ?123 and ABC look like pills while the rest were rounded rects.
+        val radius = dp(t.keyRadiusDp)
         canvas.drawRoundRect(r, radius, radius, fill)
 
         val iconColor = if (capsOn) t.onInverted else t.icon
@@ -2737,8 +2750,9 @@ class KeyboardView(context: Context) : View(context) {
     private fun handleAction(action: ToolbarAction) {
         when (action) {
             ToolbarAction.MENU -> {
-                // Replay the unroll from the card edge each time the tray opens.
-                dockProgress = 0f
+                // Start just past zero: the keyboard surface is already continuous,
+                // so an empty first frame would flash an unstyled band.
+                dockProgress = 0.15f
                 trayOpen = true
                 trayPage = 0
                 mascotExcitedAt = SystemClock.uptimeMillis()

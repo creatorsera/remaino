@@ -37,6 +37,8 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
     private lateinit var corrections: Corrections
     private val engine by lazy { SuggestionEngine(EnglishWords.load(this)) }
     private val voice by lazy { VoiceInput(this) }
+    /** Warn once per process that speech may leave the phone. */
+    private var warnedOnlineVoice = false
     private val composing = StringBuilder()
 
     /** The word as it looked before the user started correcting it. */
@@ -544,6 +546,14 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             )
             return
+        }
+        if (!VoiceInput.canWorkOffline(this) && !warnedOnlineVoice) {
+            warnedOnlineVoice = true
+            Toast.makeText(
+                this,
+                "No offline speech pack installed: this phone may send voice to its speech service.",
+                Toast.LENGTH_LONG,
+            ).show()
         }
         voice.start()
     }

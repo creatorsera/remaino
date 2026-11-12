@@ -23,6 +23,12 @@ data class ClipItem(
 /** Pure list rules for the clipboard history (newest first). */
 object ClipboardLogic {
     const val MAX_UNPINNED = 50
+    /**
+     * Hard budget for the whole history (text plus base64 image payloads). Without
+     * this, an app that keeps setting huge image clips could grow the encrypted
+     * file without bound and stall the keyboard.
+     */
+    const val MAX_TOTAL_CHARS = 16_000_000
 
     fun add(items: List<ClipItem>, text: String, now: Long): List<ClipItem> {
         val existing = items.firstOrNull { it.text == text && it.image == null }
@@ -37,18 +43,35 @@ object ClipboardLogic {
         return trim(listOf(ClipItem("Image", existing?.pinned ?: false, now, image)) + rest)
     }
 
-    /** Keeps every pinned item and the newest MAX_UNPINNED others. */
+    /** Keeps every pinned item and the newest MAX_UNPINNED others, within the byte budget. */
     fun trim(items: List<ClipItem>): List<ClipItem> {
         var unpinned = 0
-        return items.filter {
+        val kept = items.filter {
             if (it.pinned) {
                 true
             } else {
                 unpinned++
                 unpinned <= MAX_UNPINNED
             }
+        }.toMutableList()
+
+        var total = 0L
+        for (item in kept) total += sizeOf(item)
+        // Oldest clips are at the end; drop unpinned ones until the budget fits.
+        var i = kept.size - 1
+        while (i >= 0 && total > MAX_TOTAL_CHARS) {
+            val item = kept[i]
+            if (!item.pinned) {
+                total -= sizeOf(item)
+                kept.removeAt(i)
+            }
+            i--
         }
+        return kept
     }
+
+    private fun sizeOf(item: ClipItem): Long =
+        item.text.length.toLong() + (item.image?.length ?: 0).toLong()
 
     /** Pinned items never expire. expireHours of 0 means never. */
     fun prune(items: List<ClipItem>, now: Long, expireHours: Int): List<ClipItem> =

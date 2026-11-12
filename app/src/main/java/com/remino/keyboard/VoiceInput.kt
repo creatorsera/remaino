@@ -10,9 +10,10 @@ import android.speech.SpeechRecognizer
 import java.util.Locale
 
 /**
- * Small wrapper around Android's speech recognizer. It asks for the on-device
- * recognizer when the phone has one and always sets EXTRA_PREFER_OFFLINE, so a
- * downloaded offline language pack is used instead of sending audio away.
+ * Small wrapper around Android's speech recognizer. On Android 13+ it asks for the
+ * on-device recognizer when one is installed. EXTRA_PREFER_OFFLINE is only a hint:
+ * if no offline language pack exists, the system recognizer may use the network.
+ * Callers should check [canWorkOffline] and warn the user when it is false.
  */
 class VoiceInput(private val context: Context) {
 
@@ -24,6 +25,13 @@ class VoiceInput(private val context: Context) {
     var onError: ((String) -> Unit)? = null
 
     val isListening: Boolean get() = listening
+
+    companion object {
+        /** True only when the platform has an on-device recognizer installed. */
+        fun canWorkOffline(context: Context): Boolean =
+            Build.VERSION.SDK_INT >= 33 &&
+                SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
+    }
 
     fun start() {
         stop()

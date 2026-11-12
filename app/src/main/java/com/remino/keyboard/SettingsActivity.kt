@@ -33,7 +33,6 @@ import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
-import androidx.core.content.FileProvider
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import org.json.JSONObject
@@ -1197,13 +1196,10 @@ class SettingsActivity : Activity() {
 
     private fun launchInstaller(file: File) {
         try {
-            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
-            val intent = Intent(Intent.ACTION_VIEW)
-                .setDataAndType(uri, "application/vnd.android.package-archive")
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            startActivity(intent)
+            // A private PackageInstaller session: no other app can intercept the APK.
+            UpdateInstaller.install(this, file)
         } catch (e: Exception) {
-            toast("Could not open the installer. The APK is in the app cache.")
+            toast("Could not start the installer. The APK is in the app cache.")
         }
     }
 
