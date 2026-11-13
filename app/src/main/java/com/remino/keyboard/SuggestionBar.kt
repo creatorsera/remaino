@@ -2,6 +2,7 @@ package com.remino.keyboard
 
 import android.content.Context
 import android.content.res.ColorStateList
+import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.util.AttributeSet
@@ -33,6 +34,7 @@ class SuggestionBar @JvmOverloads constructor(
     var listener: Listener? = null
 
     private lateinit var mascot: KeyMascotView
+    private lateinit var barIcon: android.widget.ImageButton
     private lateinit var group: LinearLayout
     private lateinit var status: TextView
     private lateinit var mic: ImageButton
@@ -44,6 +46,7 @@ class SuggestionBar @JvmOverloads constructor(
     private var statusClickable = false
     private var theme = KeyboardTheme.Dark
     private var mascotColor = MascotColor.LIME
+    private var docked = false
 
     private val medium = Typeface.create("sans-serif-medium", Typeface.NORMAL)
     private val regular = Typeface.create("sans-serif", Typeface.NORMAL)
@@ -57,6 +60,7 @@ class SuggestionBar @JvmOverloads constructor(
     override fun onFinishInflate() {
         super.onFinishInflate()
         mascot = findViewById(R.id.mascot)
+        barIcon = findViewById(R.id.bar_icon)
         group = findViewById(R.id.suggestion_group)
         status = findViewById(R.id.status)
         mic = findViewById(R.id.mic)
@@ -77,6 +81,7 @@ class SuggestionBar @JvmOverloads constructor(
             }
         }
         mascot.setOnClickListener { listener?.onMascot() }
+        barIcon.setOnClickListener { listener?.onMascot() }
         mic.setOnClickListener { listener?.onMic() }
         status.setOnClickListener {
             if (statusClickable) listener?.onStatus()
@@ -87,15 +92,23 @@ class SuggestionBar @JvmOverloads constructor(
 
     override fun applyTheme(theme: KeyboardTheme) {
         this.theme = theme
-        background = GradientDrawable().apply {
-            cornerRadius = resources.getDimension(R.dimen.kb_bar_radius)
-            setColor(theme.bar)
+        background = if (docked) {
+            null
+        } else {
+            GradientDrawable().apply {
+                cornerRadius = resources.getDimension(R.dimen.kb_bar_radius)
+                setColor(theme.bar)
+            }
         }
         cells.forEach { it.setTextColor(theme.text) }
         status.setTextColor(theme.text)
         dividers.forEach { it.setBackgroundColor(theme.divider) }
         mic.imageTintList = ColorStateList.valueOf(if (listening) theme.accent else theme.icon)
         mascot.setColors(mascotColor.body, mascotColor.ink, theme.accent)
+        barIcon.imageTintList = ColorStateList.valueOf(mascotColor.body)
+        barIcon.backgroundTintList = ColorStateList.valueOf(
+            androidx.core.graphics.ColorUtils.setAlphaComponent(mascotColor.body, 42),
+        )
         cells[1].typeface = medium
         cells[0].typeface = regular
         cells[2].typeface = regular
@@ -158,6 +171,7 @@ class SuggestionBar @JvmOverloads constructor(
 
     override fun setMascotVisible(visible: Boolean) {
         mascot.visibility = if (visible) VISIBLE else GONE
+        barIcon.visibility = if (visible) GONE else VISIBLE
     }
 
     override fun pokeMascot() {
@@ -167,6 +181,13 @@ class SuggestionBar @JvmOverloads constructor(
 
     override fun setBarVisible(visible: Boolean) {
         visibility = if (visible) VISIBLE else GONE
+    }
+
+    /** True when the bar should sit inside the keyboard panel instead of floating. */
+    fun setDocked(value: Boolean) {
+        if (docked == value) return
+        docked = value
+        applyTheme(theme)
     }
 
     private fun dp(v: Float): Float = v * resources.displayMetrics.density

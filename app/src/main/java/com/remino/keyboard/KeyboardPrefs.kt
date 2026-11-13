@@ -72,7 +72,7 @@ class KeyboardPrefs(context: Context) {
         set(value) { prefs.edit().putBoolean(KEY_NUMBER_ROW, value).apply() }
 
     var keyPreview: Boolean
-        get() = prefs.getBoolean(KEY_PREVIEW, true)
+        get() = prefs.getBoolean(KEY_PREVIEW, false)
         set(value) { prefs.edit().putBoolean(KEY_PREVIEW, value).apply() }
 
     /** Light, dark, or follow the phone. */
@@ -164,6 +164,11 @@ class KeyboardPrefs(context: Context) {
         get() = prefs.getBoolean(KEY_FLOATING, false)
         set(value) { prefs.edit().putBoolean(KEY_FLOATING, value).apply() }
 
+    /** The suggestion bar can float above the keys or sit docked in the panel. */
+    var floatingBar: Boolean
+        get() = prefs.getBoolean(KEY_FLOATING_BAR, false)
+        set(value) { prefs.edit().putBoolean(KEY_FLOATING_BAR, value).apply() }
+
     /** Last position of the floating keyboard in pixels, or -1 when it was never moved. */
     var floatingX: Int
         get() = prefs.getInt(KEY_FLOATING_X, -1)
@@ -240,6 +245,7 @@ class KeyboardPrefs(context: Context) {
         .put("keyboardHeightPercent", keyboardHeightPercent)
         .put("keyboardPadding", keyboardPadding)
         .put("floatingKeyboard", floatingKeyboard)
+        .put("floatingBar", floatingBar)
         .put("clipboardEnabled", clipboardEnabled)
         .put("clipboardExpireHours", clipboardExpireHours)
         .put("clipboardImages", clipboardImages)
@@ -259,6 +265,7 @@ class KeyboardPrefs(context: Context) {
         if (json.has("mascotOffsetY")) mascotOffsetY = json.optInt("mascotOffsetY", -3)
         if (json.has("mascotScale")) mascotScale = json.optInt("mascotScale", 100)
         if (json.has("suggestionDock")) suggestionDock = json.optBoolean("suggestionDock", true)
+        if (json.has("floatingBar")) floatingBar = json.optBoolean("floatingBar", false)
         if (json.has("haptics")) haptics = json.optBoolean("haptics")
         if (json.has("sound")) sound = json.optBoolean("sound")
         if (json.has("autoCapitalize")) autoCapitalize = json.optBoolean("autoCapitalize")
@@ -357,6 +364,7 @@ class KeyboardPrefs(context: Context) {
         const val KEY_HEIGHT_PERCENT = "keyboard_height_percent"
         const val KEY_BOTTOM_PADDING = "keyboard_bottom_padding"
         const val KEY_FLOATING = "floating_keyboard"
+        const val KEY_FLOATING_BAR = "floating_bar_v2"
         const val KEY_FLOATING_X = "floating_x"
         const val KEY_FLOATING_Y = "floating_y"
         const val KEY_CLIP_ENABLED = "clip_enabled"

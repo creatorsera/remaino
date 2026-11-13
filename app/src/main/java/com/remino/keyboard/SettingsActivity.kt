@@ -503,6 +503,13 @@ class SettingsActivity : Activity() {
         ) { requestFloating(it) }
         floatingSwitch = floatingRow.getChildAt(1) as? Switch
         floating.addView(floatingRow)
+        floating.addView(
+            switchRow(
+                "Floating suggestion bar",
+                "Off keeps the bar docked inside the keyboard. On floats it above the keys",
+                options.floatingBar,
+            ) { options.floatingBar = it },
+        )
         pane.addView(floating)
     }
 

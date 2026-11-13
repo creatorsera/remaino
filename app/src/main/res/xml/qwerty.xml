@@ -56,9 +56,8 @@
     <Row>
         <Key app:keyLabel="@string/key_symbols" app:keyType="symbols" app:keyWeight="1.4" />
         <Key app:keyLabel="," app:keyType="comma" app:keyWeight="1" />
-        <Key app:keyType="emoji" app:keyWeight="1" />
         <Key app:keyType="globe" app:keyWeight="1" />
-        <Key app:keyType="space" app:keyLabel="English" app:keyWeight="3.1" />
+        <Key app:keyType="space" app:keyLabel="English" app:keyWeight="4.1" />
         <Key app:keyLabel="." app:keyType="period" app:keyWeight="1" />
         <Key app:keyType="enter" app:keyWeight="1.5" />
     </Row>

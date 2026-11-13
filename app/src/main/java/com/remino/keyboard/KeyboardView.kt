@@ -443,7 +443,6 @@ class KeyboardView @JvmOverloads constructor(
         if (layoutChanged) requestLayout()
         chrome?.applyTheme(theme)
         keyPopup?.theme = theme
-        chrome?.setMascotVisible(true)
         chrome?.setLanguage(languageLabel)
         rebuildTargets()
         invalidate()
@@ -588,18 +587,24 @@ class KeyboardView @JvmOverloads constructor(
         val leftRect = RectF(leftCx - dp(22f), cy - dp(22f), leftCx + dp(22f), cy + dp(22f))
 
         if (panel == Panel.CLIPBOARD && !dockMode()) {
-            targets.add(Target(leftRect, action = ToolbarAction.BACK))
+            val headerCy = topOffset() + panelHeaderH / 2f
+            targets.add(
+                Target(
+                    RectF(leftCx - dp(22f), headerCy - dp(22f), leftCx + dp(22f), headerCy + dp(22f)),
+                    action = ToolbarAction.BACK,
+                ),
+            )
             val pauseCx = w - dp(68f)
             val editCx = w - dp(28f)
             targets.add(
                 Target(
-                    RectF(pauseCx - dp(22f), cy - dp(22f), pauseCx + dp(22f), cy + dp(22f)),
+                    RectF(pauseCx - dp(22f), headerCy - dp(22f), pauseCx + dp(22f), headerCy + dp(22f)),
                     action = ToolbarAction.CLIP_PAUSE,
                 ),
             )
             targets.add(
                 Target(
-                    RectF(editCx - dp(22f), cy - dp(22f), editCx + dp(22f), cy + dp(22f)),
+                    RectF(editCx - dp(22f), headerCy - dp(22f), editCx + dp(22f), headerCy + dp(22f)),
                     action = ToolbarAction.CLIP_EDIT,
                 ),
             )
@@ -615,13 +620,23 @@ class KeyboardView @JvmOverloads constructor(
                     targets.add(Target(RectF(r.left, r.top, r.right, r.bottom), action = a))
                 }
             }
-            val top = keysTop()
-            contentRect.set(sideMargin, top, w - sideMargin, top + keysHeight())
+            val top = panelContentTop()
+            contentRect.set(dp(12f), top, w - dp(12f), top + panelContentHeight())
             return
         }
         // Leaving the clipboard/emoji panel: the contentRect from those panels would
         // otherwise swallow the first tap on the keyboard keys area.
         if (panel == Panel.KEYS) contentRect.set(0f, 0f, 0f, 0f)
+
+        if (panel == Panel.EMOJI) {
+            val headerCy = topOffset() + panelHeaderH / 2f
+            targets.add(
+                Target(
+                    RectF(leftCx - dp(22f), headerCy - dp(22f), leftCx + dp(22f), headerCy + dp(22f)),
+                    action = ToolbarAction.BACK,
+                ),
+            )
+        }
 
         if (captureMode != Capture.NONE) {
             targets.add(Target(leftRect, action = ToolbarAction.BACK))
@@ -835,14 +850,23 @@ class KeyboardView @JvmOverloads constructor(
         )
     }
 
-    /** Content area for Emoji / Clipboard, starting under the Reo header. */
+    /** Header strip used by the Emoji and Clipboard panels outside dock mode. */
+    private val panelHeaderH: Float get() = dp(44f)
+
+    /** Content area for Emoji / Clipboard, starting under the header. */
     private fun panelActive(): Boolean = dockOpen()
 
-    private fun panelContentTop(): Float =
-        if (panelActive()) topOffset() + dockHeaderH else keysTop()
+    private fun panelContentTop(): Float = when {
+        panelActive() -> topOffset() + dockHeaderH
+        panel != Panel.KEYS -> topOffset() + panelHeaderH
+        else -> keysTop()
+    }
 
-    private fun panelContentHeight(): Float =
-        if (panelActive()) (height - panelContentTop() - dp(10f)).coerceAtLeast(dp(40f)) else keysHeight()
+    private fun panelContentHeight(): Float = when {
+        panelActive() -> (height - panelContentTop() - dp(10f)).coerceAtLeast(dp(40f))
+        panel != Panel.KEYS -> (height - panelContentTop() - dp(6f)).coerceAtLeast(dp(150f))
+        else -> keysHeight()
+    }
 
     private fun dockCurtainTileRects(): List<RectF> {
         val area = dockCurtainRect()
@@ -1436,6 +1460,18 @@ class KeyboardView @JvmOverloads constructor(
         val dock = dockMode()
         val dockExpanded = dockOpen()
 
+        // Emoji and clipboard are full keyboard panels: paint an opaque surface
+        // first so the app behind can never show through.
+        if (panel != Panel.KEYS) {
+            fill.shader = null
+            fill.color = t.base
+            if (floating) {
+                canvas.drawRoundRect(0f, 0f, w, h, r, r, fill)
+            } else {
+                canvas.drawRect(0f, 0f, w, h, fill)
+            }
+        }
+
         publishMascotState()
         if (floating) {
             tmpRect.set(0f, 0f, w, h)
@@ -1456,21 +1492,30 @@ class KeyboardView @JvmOverloads constructor(
             drawTopRounded(canvas, h, w, r, t.base, shellTop)
             if (!dock) drawTopRounded(canvas, topOffset() + toolbarH, w, r, t.toolbar, topOffset())
         }
-        if (panel == Panel.CLIPBOARD && !dock) {
-            drawLeftLabel(canvas, "Clipboard", dp(56f), toolbarCenterY(), sp(16f), t.text)
+        if (panel != Panel.KEYS && !dock) {
+            fill.color = t.toolbar
+            canvas.drawRect(0f, topOffset(), w, topOffset() + panelHeaderH, fill)
+            val headerCy = topOffset() + panelHeaderH / 2f
+            drawIcon(canvas, R.drawable.ic_back, dp(28f), headerCy, dp(18f), t.icon)
+            drawLeftLabel(
+                canvas,
+                if (panel == Panel.CLIPBOARD) "Clipboard" else "Emoji",
+                dp(56f), headerCy, sp(16f), t.text,
+            )
+            if (panel == Panel.CLIPBOARD) {
+                drawIcon(canvas, R.drawable.ic_pause, w - dp(68f), headerCy, dp(17f), t.icon)
+                drawIcon(canvas, R.drawable.ic_edit, w - dp(28f), headerCy, dp(17f), t.icon)
+            }
+            strokePaint.color = ColorUtils.blendARGB(t.base, t.text, 0.08f)
+            strokePaint.strokeWidth = dp(1f)
+            val dividerY = topOffset() + panelHeaderH - dp(0.5f)
+            canvas.drawLine(0f, dividerY, w, dividerY, strokePaint)
         } else if (sensitive && !trayOpen && !dock && captureMode == Capture.NONE) {
             drawLabel(canvas, "Private field", w / 2f, toolbarCenterY(), sp(14f), t.textDim)
         }
 
         if (captureMode != Capture.NONE) drawCapturePill(canvas, t, w)
 
-        if (!dock && listening && !trayOpen && captureMode == Capture.NONE) {
-            drawListeningPill(canvas, t, w)
-        } else if (!dock && (bulkUndo || bulkRedo) && !trayOpen && captureMode == Capture.NONE) {
-            drawBulkUndoPill(canvas, t, w)
-        } else if (!dock && copiedChip != null && !trayOpen && captureMode == Capture.NONE) {
-            drawCopiedChip(canvas, t, w)
-        }
 
         if (dock && dockExpanded) {
             // Keep the key bed visible beneath the unfolding panel so the surface
@@ -1512,11 +1557,6 @@ class KeyboardView @JvmOverloads constructor(
 
         if (clipSheetVisible) drawClipSheet(canvas, t)
         if (trayOpen && !dock) drawTrayGrid(canvas, t)
-
-        if (!dock && mascotEnabled && placement == MascotPlacement.ABOVE && mascotVisible()) {
-            drawBandMascot(canvas, t)
-            postInvalidateOnAnimation()
-        }
     }
 
     private fun drawTopRounded(canvas: Canvas, bottom: Float, w: Float, r: Float, color: Int, top: Float = 0f) {

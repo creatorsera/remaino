@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
 import android.inputmethodservice.InputMethodService
 import android.os.Handler
 import android.os.Looper
@@ -20,6 +21,7 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.core.content.FileProvider
 import androidx.core.view.inputmethod.EditorInfoCompat
@@ -69,7 +71,8 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
     private var inputRoot: FrameLayout? = null
     private var chromeRoot: FrameLayout? = null
     private lateinit var suggestionBar: SuggestionBar
-    private lateinit var quickSettings: QuickSettingsView
+    private lateinit var barGap: View
+    private lateinit var optionsTray: OptionsTrayView
     private var hasCaret = false
     private var caretScreenX = -1f
     private var caretScreenTop = Float.NaN
@@ -121,8 +124,9 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
             keyboardView = chrome.findViewById(R.id.keyboard)
             keyboardView.listener = this
             suggestionBar = chrome.findViewById(R.id.suggestion_bar)
-            quickSettings = chrome.findViewById(R.id.quick_settings)
+            barGap = chrome.findViewById(R.id.bar_gap)
             keyboardView.chrome = suggestionBar
+            optionsTray = chrome.findViewById(R.id.options_tray)
             wireChrome()
             chromeRoot = chrome
         }
@@ -147,35 +151,49 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
                 if (voice.isListening) voice.stop() else keyboardView.dismissCopiedChip()
             }
             override fun onMascot() {
-                quickSettings.bind(prefs)
-                quickSettings.setTheme(keyboardView.theme)
-                quickSettings.show()
+                if (optionsTray.isShowing) {
+                    optionsTray.hide()
+                } else {
+                    optionsTray.show(prefs, keyboardView.theme, prefs.mascotColor)
+                }
             }
         }
-        quickSettings.listener = object : QuickSettingsView.Listener {
-            override fun onAppearance(mode: Appearance) {
-                prefs.appearance = mode
-                keyboardView.applySettings(prefs)
-                quickSettings.setTheme(keyboardView.theme)
-            }
-            override fun onToggle(key: String, value: Boolean) {
-                when (key) {
-                    "haptics" -> prefs.haptics = value
-                    "sound" -> prefs.sound = value
-                    "preview" -> prefs.keyPreview = value
-                    "floating" -> prefs.floatingKeyboard = value
-                }
-                keyboardView.applySettings(prefs)
-                if (key == "floating") applyHostMode()
-            }
+        optionsTray.listener = object : OptionsTrayView.Listener {
             override fun onAction(action: ToolbarAction) {
-                quickSettings.hide()
+                optionsTray.hide()
                 keyboardView.performToolbarAction(action)
             }
-            override fun onClose() = quickSettings.hide()
+            override fun onClose() = optionsTray.hide()
         }
         suggestionBar.applyTheme(keyboardView.theme)
     }
+
+    /** Docks the suggestion bar into the keyboard, or floats it above the keys. */
+    private fun applyBarStyle(options: KeyboardPrefs) {
+        val chrome = chromeRoot ?: return
+        val floating = options.floatingBar
+        suggestionBar.setDocked(!floating)
+        suggestionBar.layoutParams = (suggestionBar.layoutParams as LinearLayout.LayoutParams).apply {
+            val margin = if (floating) resources.getDimensionPixelSize(R.dimen.kb_bar_margin) else 0
+            setMargins(margin, 0, margin, 0)
+        }
+        barGap.visibility = if (floating) View.VISIBLE else View.GONE
+        barGap.layoutParams = barGap.layoutParams.apply {
+            height = if (floating) resources.getDimensionPixelSize(R.dimen.kb_bar_gap) else 0
+        }
+        chrome.setPadding(0, if (floating) 0 else dp(6), 0, 0)
+        chrome.background = if (floating || keyboardView.floating) {
+            null
+        } else {
+            GradientDrawable().apply {
+                val r = resources.getDimension(R.dimen.kb_panel_radius)
+                cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
+                setColor(keyboardView.theme.base)
+            }
+        }
+    }
+
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     private fun hideFloating() {
         val chrome = chromeRoot ?: return
@@ -221,6 +239,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
             }
             keyboardView.setFloating(false)
         }
+        applyBarStyle(prefs)
     }
 
     override fun onEvaluateFullscreenMode(): Boolean = false
@@ -260,6 +279,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
         currentInputConnection?.requestCursorUpdates(InputConnection.CURSOR_UPDATE_MONITOR)
         keyboardView.applySettings(options)
         suggestionBar.applyMascotColor(options.mascotColor)
+        applyBarStyle(options)
         updateMascotOverlay()
         keyboardView.cancelCapture()
         keyboardView.closeTray()
@@ -277,6 +297,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
 
     override fun onFinishInputView(finishingInput: Boolean) {
         finishWord()
+        if (::optionsTray.isInitialized) optionsTray.hide()
         if (::keyboardView.isInitialized) keyboardView.cancelCapture()
         mascotOverlay.hide()
         mascotVisibleNow = false
@@ -656,6 +677,7 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
                     Appearance.DARK -> Appearance.SYSTEM
                 }
                 keyboardView.applySettings(prefs)
+                applyBarStyle(prefs)
             }
             ToolbarAction.HIDE -> requestHideSelf(0)
             ToolbarAction.DELETE_WORD -> onDeleteWord()
@@ -789,9 +811,13 @@ class KeyboardService : InputMethodService(), KeyboardView.Listener {
     private fun updateMascotOverlay() {
         if (!::keyboardView.isInitialized) return
         // Decide this before layout so the band is never reserved (and then removed) on CURSOR.
-        // Reo now lives in the XML suggestion bar; the caret overlay stays off.
-        val wanted = false
+        val wanted = prefs.mascot && prefs.mascotPlacement == MascotPlacement.CURSOR &&
+            mascotOverlay.canShow()
         keyboardView.setOverlayMascot(wanted)
+        if (::suggestionBar.isInitialized) {
+            // Do not show two Reos at once: the bar gets a tappable icon instead.
+            suggestionBar.setMascotVisible(prefs.mascot && !wanted)
+        }
         if (!wanted || !mascotVisibleNow || !hasCaret || caretScreenTop.isNaN()) {
             mascotOverlay.hide()
             return

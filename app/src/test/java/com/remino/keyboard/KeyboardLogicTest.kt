@@ -140,7 +140,7 @@ class LayoutsTest {
     fun bottomRowHasTheNewShape() {
         val bottom = Layouts.letters(context, false).last()
         assertEquals(
-            listOf("?123", ",", "😊", "🌐", "English", ".", "⏎"),
+            listOf("?123", ",", "🌐", "English", ".", "⏎"),
             bottom.map { key ->
                 when (key.type) {
                     KeyType.EMOJI -> "😊"

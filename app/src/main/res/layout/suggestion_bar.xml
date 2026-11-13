@@ -8,6 +8,19 @@
     android:paddingStart="@dimen/kb_bar_margin"
     android:paddingEnd="@dimen/kb_bar_margin">
 
+    <ImageButton
+        android:id="@+id/bar_icon"
+        android:layout_width="@dimen/kb_mascot"
+        android:layout_height="@dimen/kb_mascot"
+        android:layout_marginEnd="@dimen/kb_mascot_margin"
+        android:background="@drawable/bg_mascot_badge"
+        android:contentDescription="Options"
+        android:padding="7dp"
+        android:scaleType="centerInside"
+        android:src="@drawable/ic_grid"
+        android:tint="@color/kb_icon"
+        android:visibility="gone" />
+
     <com.remino.keyboard.KeyMascotView
         android:id="@+id/mascot"
         android:layout_width="@dimen/kb_mascot"

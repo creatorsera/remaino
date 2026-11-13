@@ -21,19 +21,23 @@ class KeyboardChromeTest {
 
         val bar = root.findViewById<SuggestionBar>(R.id.suggestion_bar)
         val keyboard = root.findViewById<KeyboardView>(R.id.keyboard)
-        val quick = root.findViewById<QuickSettingsView>(R.id.quick_settings)
         assertNotNull(bar)
         assertNotNull(keyboard)
-        assertNotNull(quick)
 
         keyboard.chrome = bar
         keyboard.setSuggestions(listOf("hello", "help", "helmet"))
         bar.setListening(true)
         bar.setStatus("Listening…", true)
         bar.applyTheme(KeyboardTheme.Light)
-        quick.setTheme(KeyboardTheme.Light)
-        quick.bind(KeyboardPrefs(context))
+        bar.setDocked(true)
+        bar.setMascotVisible(false)
+
+        val tray = LayoutInflater.from(context).inflate(R.layout.options_tray, null) as OptionsTrayView
+        tray.bind(KeyboardPrefs(context))
+        tray.setTheme(KeyboardTheme.Light, MascotColor.MINT)
 
         assertTrue(bar.childCount > 0)
+        assertTrue(tray.childCount > 0)
+        assertTrue(bar.findViewById<android.view.View>(R.id.bar_icon).visibility == android.view.View.VISIBLE)
     }
 }
